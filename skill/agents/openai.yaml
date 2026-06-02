@@ -1,0 +1,4 @@
+interface:
+  display_name: "A股尾盘选股"
+  short_description: "C-version A-share close-session screener"
+  default_prompt: "Use $a-share-tailpicker to run a 14:20 A股尾盘筛选 and produce candidates, reasons, suggested prices, and next-day actions."

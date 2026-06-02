@@ -1,0 +1,53 @@
+{
+  "asof_time": "14:20",
+  "trade_dates": ["2026-05-25", "2026-05-26", "2026-05-27", "2026-05-28", "2026-05-29"],
+  "days": [
+    {
+      "trade_date": "2026-05-25",
+      "next_trade_date": "2026-05-26",
+      "market": {"state": "range", "index_tail_return_pct": 0.18, "breadth_up_ratio": 0.54, "limit_up": 48, "limit_down": 12},
+      "stocks": [
+        {"code": "600111", "name": "北方稀土", "sector": "有色金属", "price": 22.48, "pre_close": 22.08, "tail_gain_pct": 1.18, "volume_ratio": 1.86, "tail_vol_ratio": 0.26, "turnover_rate": 5.8, "amount_mn": 1480, "market_cap_bn": 820, "pe": 34, "ma_state": "bull", "pattern": "breakout", "capital_flow_score": 72, "sector_score": 14, "news_sentiment": 1, "hot_rank": 42, "next_open": 22.82, "next_1000": 23.18, "next_1450": 23.06},
+        {"code": "688981", "name": "中芯国际", "sector": "半导体", "price": 92.10, "pre_close": 90.00, "tail_gain_pct": 1.30, "volume_ratio": 2.10, "tail_vol_ratio": 0.25, "turnover_rate": 4.2, "amount_mn": 2200, "market_cap_bn": 5200, "pe": 70, "ma_state": "bull", "pattern": "strong_accel", "capital_flow_score": 75, "sector_score": 20, "news_sentiment": 1, "hot_rank": 6, "next_open": 92.80, "next_1000": 92.00, "next_1450": 91.50},
+        {"code": "600808", "name": "马钢股份", "sector": "钢铁", "price": 2.92, "pre_close": 2.90, "tail_gain_pct": 0.12, "volume_ratio": 0.82, "tail_vol_ratio": 0.07, "turnover_rate": 1.1, "amount_mn": 120, "market_cap_bn": 165, "pe": 18, "ma_state": "range", "pattern": "none", "capital_flow_score": 20, "sector_score": 3, "news_sentiment": 0, "hot_rank": 400, "next_open": 2.91, "next_1000": 2.90, "next_1450": 2.89}
+      ]
+    },
+    {
+      "trade_date": "2026-05-26",
+      "next_trade_date": "2026-05-27",
+      "market": {"state": "bull", "index_tail_return_pct": 0.35, "breadth_up_ratio": 0.63, "limit_up": 71, "limit_down": 8},
+      "stocks": [
+        {"code": "601899", "name": "紫金矿业", "sector": "有色金属", "price": 19.34, "pre_close": 18.96, "tail_gain_pct": 1.65, "volume_ratio": 2.18, "tail_vol_ratio": 0.31, "turnover_rate": 4.9, "amount_mn": 3650, "market_cap_bn": 4200, "pe": 28, "ma_state": "bull", "pattern": "strong_accel", "capital_flow_score": 82, "sector_score": 20, "news_sentiment": 1, "hot_rank": 28, "next_open": 19.66, "next_1000": 20.05, "next_1450": 20.12},
+        {"code": "600519", "name": "贵州茅台", "sector": "白酒", "price": 1308.00, "pre_close": 1295.00, "tail_gain_pct": 0.62, "volume_ratio": 1.28, "tail_vol_ratio": 0.18, "turnover_rate": 0.9, "amount_mn": 5200, "market_cap_bn": 16400, "pe": 25, "ma_state": "bull", "pattern": "pullback", "capital_flow_score": 50, "sector_score": 8, "news_sentiment": 0, "hot_rank": 18, "next_open": 1304.00, "next_1000": 1312.00, "next_1450": 1306.50},
+        {"code": "300750", "name": "宁德时代", "sector": "电力设备", "price": 228.60, "pre_close": 225.10, "tail_gain_pct": 1.22, "volume_ratio": 1.94, "tail_vol_ratio": 0.24, "turnover_rate": 3.8, "amount_mn": 4100, "market_cap_bn": 10000, "pe": 32, "ma_state": "bull", "pattern": "breakout", "capital_flow_score": 78, "sector_score": 20, "news_sentiment": 1, "hot_rank": 3, "next_open": 230.20, "next_1000": 231.00, "next_1450": 229.40}
+      ]
+    },
+    {
+      "trade_date": "2026-05-27",
+      "next_trade_date": "2026-05-28",
+      "market": {"state": "range", "index_tail_return_pct": -0.12, "breadth_up_ratio": 0.48, "limit_up": 39, "limit_down": 22},
+      "stocks": [
+        {"code": "600030", "name": "中信证券", "sector": "证券", "price": 24.16, "pre_close": 23.92, "tail_gain_pct": 0.92, "volume_ratio": 1.55, "tail_vol_ratio": 0.22, "turnover_rate": 3.5, "amount_mn": 2100, "market_cap_bn": 3500, "pe": 22, "ma_state": "bull", "pattern": "pullback", "capital_flow_score": 61, "sector_score": 14, "news_sentiment": 0, "hot_rank": 70, "next_open": 23.96, "next_1000": 23.80, "next_1450": 23.70},
+        {"code": "600406", "name": "国电南瑞", "sector": "电网设备", "price": 27.88, "pre_close": 27.30, "tail_gain_pct": 1.42, "volume_ratio": 2.05, "tail_vol_ratio": 0.29, "turnover_rate": 3.9, "amount_mn": 1320, "market_cap_bn": 2240, "pe": 29, "ma_state": "bull", "pattern": "breakout", "capital_flow_score": 76, "sector_score": 14, "news_sentiment": 1, "hot_rank": 86, "next_open": 28.12, "next_1000": 28.36, "next_1450": 28.20}
+      ]
+    },
+    {
+      "trade_date": "2026-05-28",
+      "next_trade_date": "2026-05-29",
+      "market": {"state": "bear", "index_tail_return_pct": -0.42, "breadth_up_ratio": 0.36, "limit_up": 21, "limit_down": 31},
+      "stocks": [
+        {"code": "600276", "name": "恒瑞医药", "sector": "医药", "price": 47.20, "pre_close": 46.82, "tail_gain_pct": 0.74, "volume_ratio": 1.52, "tail_vol_ratio": 0.19, "turnover_rate": 2.7, "amount_mn": 980, "market_cap_bn": 3000, "pe": 39, "ma_state": "range", "pattern": "v_reversal", "capital_flow_score": 58, "sector_score": 8, "news_sentiment": 1, "hot_rank": 95, "next_open": 46.60, "next_1000": 46.88, "next_1450": 46.40},
+        {"code": "600703", "name": "三安光电", "sector": "半导体", "price": 13.44, "pre_close": 13.66, "tail_gain_pct": -0.20, "volume_ratio": 0.75, "tail_vol_ratio": 0.11, "turnover_rate": 2.4, "amount_mn": 420, "market_cap_bn": 670, "pe": -12, "ma_state": "bear", "pattern": "negative", "capital_flow_score": 8, "sector_score": 0, "news_sentiment": -1, "hot_rank": 180, "next_open": 13.20, "next_1000": 13.10, "next_1450": 13.05}
+      ]
+    },
+    {
+      "trade_date": "2026-05-29",
+      "next_trade_date": "2026-06-01",
+      "market": {"state": "range", "index_tail_return_pct": 0.08, "breadth_up_ratio": 0.51, "limit_up": 46, "limit_down": 16},
+      "stocks": [
+        {"code": "601318", "name": "中国平安", "sector": "保险", "price": 52.18, "pre_close": 51.54, "tail_gain_pct": 1.02, "volume_ratio": 1.70, "tail_vol_ratio": 0.24, "turnover_rate": 2.9, "amount_mn": 2600, "market_cap_bn": 9500, "pe": 11, "ma_state": "bull", "pattern": "breakout", "capital_flow_score": 68, "sector_score": 14, "news_sentiment": 0, "hot_rank": 36, "next_open": 52.40, "next_1000": 52.88, "next_1450": 52.72},
+        {"code": "600893", "name": "航发动力", "sector": "国防军工", "price": 39.10, "pre_close": 38.72, "tail_gain_pct": 0.90, "volume_ratio": 1.44, "tail_vol_ratio": 0.21, "turnover_rate": 3.2, "amount_mn": 850, "market_cap_bn": 1040, "pe": 55, "ma_state": "range", "pattern": "strong_accel", "capital_flow_score": 44, "sector_score": 3, "news_sentiment": 0, "hot_rank": 160, "next_open": 38.70, "next_1000": 38.42, "next_1450": 38.20}
+      ]
+    }
+  ]
+}
