@@ -1172,12 +1172,148 @@ def backtest_live(args: argparse.Namespace) -> Dict[str, Any]:
     }
 
 
-def write_report(report: Dict[str, Any], output: Optional[str]) -> None:
-    text = json.dumps(report, ensure_ascii=False, indent=2)
+def markdown_value(value: Any, default: str = "-") -> str:
+    if value is None or value == "":
+        return default
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    return str(value)
+
+
+def markdown_list(items: Sequence[Any]) -> List[str]:
+    return [f"- {markdown_value(item)}" for item in items] if items else ["- 无"]
+
+
+def render_orders_markdown(title: str, orders: Sequence[Dict[str, Any]], empty_note: str) -> List[str]:
+    lines = [f"## {title}", ""]
+    if not orders:
+        lines.extend([empty_note, ""])
+        return lines
+
+    for idx, order in enumerate(orders, start=1):
+        lines.extend([
+            f"### {idx}. {order.get('code')} {order.get('name', '')}",
+            "",
+            f"- 板块/sector: {markdown_value(order.get('sector'))}",
+            f"- 等级/grade: {markdown_value(order.get('grade'))}",
+            f"- 分数/score: {markdown_value(order.get('score'))}",
+            f"- 形态/pattern: {markdown_value(order.get('pattern'))}",
+            f"- 当前价/current price: {markdown_value(order.get('current_price'))}",
+        ])
+        if "suggested_price" in order:
+            lines.append(f"- 建议限价/suggested price: {markdown_value(order.get('suggested_price'))}")
+        if "position_pct" in order:
+            lines.append(f"- 建议仓位/position: {markdown_value(order.get('position_pct'))}%")
+        blockers = order.get("blockers")
+        if blockers:
+            lines.append("- 阻碍/blockers:")
+            lines.extend(markdown_list(blockers))
+        triggers = order.get("upgrade_triggers")
+        if triggers:
+            lines.append("- 升级条件/upgrade triggers:")
+            lines.extend(markdown_list(triggers))
+        reasons = order.get("reasons", [])
+        lines.append("- 理由/reasons:")
+        lines.extend(markdown_list(reasons))
+        lines.append("")
+    return lines
+
+
+def render_screen_markdown(report: Dict[str, Any]) -> str:
+    market = report.get("market_state", {})
+    lines = [
+        "# A股尾盘选股报告",
+        "",
+        f"- 日期/trade date: {markdown_value(report.get('trade_date'))}",
+        f"- 时间/asof time: {markdown_value(report.get('asof_time'))}",
+        f"- 市场状态/market state: {markdown_value(market.get('state'))}",
+        f"- 模式/mode: {markdown_value(report.get('mode'))}",
+        "",
+        "## 市场说明 market_notes",
+        "",
+    ]
+    lines.extend(markdown_list(report.get("market_notes", [])))
+    lines.append("")
+    lines.extend(render_orders_markdown("正式可买 final_orders", report.get("final_orders", []), "无正式可买标的。"))
+    lines.extend(render_orders_markdown("观察池 watchlist", report.get("watchlist", []), "无观察标的。"))
+    rejects = report.get("rejects", [])
+    lines.extend([
+        "## 过滤统计 rejects",
+        "",
+        f"- 过滤/缺失数量: {len(rejects)}",
+    ])
+    for item in rejects[:10]:
+        lines.append(f"- {item.get('code')} {item.get('name', '')}: {item.get('reason')}")
+    if len(rejects) > 10:
+        lines.append(f"- ... 其余 {len(rejects) - 10} 条略")
+    lines.extend([
+        "",
+        "## 声明 disclaimer",
+        "",
+        markdown_value(report.get("disclaimer", "仅供研究和复盘，不构成投资建议。")),
+    ])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_backtest_markdown(report: Dict[str, Any]) -> str:
+    retrospective = report.get("retrospective", {})
+    lines = [
+        "# A股尾盘回测报告",
+        "",
+        f"- 时间/asof time: {markdown_value(report.get('asof_time'))}",
+        f"- 样本交易日/sample days: {markdown_value(retrospective.get('sample_trading_days'))}",
+        f"- 交易数/trades: {markdown_value(retrospective.get('trade_count'))}",
+        f"- 胜率/win rate: {markdown_value(retrospective.get('win_rate'))}",
+        f"- 平均收益/average return pct: {markdown_value(retrospective.get('average_return_pct'))}",
+        "",
+        "## 复盘结论 review",
+        "",
+        markdown_value(retrospective.get("review")),
+        "",
+        "## 规则改进 rule_improvements",
+        "",
+    ]
+    lines.extend(markdown_list(retrospective.get("rule_improvements", [])))
+    lines.extend(["", "## 失败记录 failed_notes", ""])
+    lines.extend(markdown_list(retrospective.get("failed_notes", [])))
+    lines.extend(["", "## 每日结果 daily_results", ""])
+    for row in report.get("daily_results", []):
+        lines.append(
+            f"- {row.get('trade_date')} -> {row.get('next_trade_date')}: "
+            f"{row.get('verification')}，pick_count={row.get('pick_count')}，return={markdown_value(row.get('actual_return_pct'))}"
+        )
+    lines.extend([
+        "",
+        "## 声明 disclaimer",
+        "",
+        markdown_value(report.get("disclaimer", "仅供研究和复盘，不构成投资建议。")),
+    ])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_markdown_report(report: Dict[str, Any]) -> str:
+    if report.get("mode") == "screen":
+        return render_screen_markdown(report)
+    if report.get("mode") == "backtest":
+        return render_backtest_markdown(report)
+    return "# A股尾盘报告\n\n```json\n" + json.dumps(report, ensure_ascii=False, indent=2) + "\n```\n"
+
+
+def resolve_output_format(output: Optional[str], output_format: str) -> str:
+    if output_format != "auto":
+        return output_format
+    if output and Path(output).suffix.lower() in {".md", ".markdown"}:
+        return "markdown"
+    return "json"
+
+
+def write_report(report: Dict[str, Any], output: Optional[str], output_format: str = "auto") -> None:
+    resolved_format = resolve_output_format(output, output_format)
+    text = render_markdown_report(report) if resolved_format == "markdown" else json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if output:
         path = Path(output).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text + "\n", encoding="utf-8")
+        path.write_text(text, encoding="utf-8")
         print(str(path))
     else:
         print(text)
@@ -1191,7 +1327,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--fixture", type=Path, help="Use deterministic fixture JSON instead of live AKShare data")
         cmd.add_argument("--trade-date", help="YYYY-MM-DD decision date")
         cmd.add_argument("--asof-time", default="14:20", help="Decision time, e.g. 14:20 or 14:50")
-        cmd.add_argument("--output", help="Write JSON report to this path")
+        cmd.add_argument("--output", help="Write report to this path")
+        cmd.add_argument("--format", choices=["auto", "json", "markdown"], default="auto", help="Report format; auto uses markdown for .md/.markdown outputs")
         cmd.add_argument("--fetch-timeout", type=int, default=8, help="Seconds before skipping a slow public data fetch; 0 disables")
         cmd.add_argument("--no-eastmoney-fallback", action="store_true", help="Skip slow Eastmoney minute fallback after Sina minute data fails")
     sub.choices["screen"].add_argument("--codes", help="Comma-separated stock codes")
@@ -1217,14 +1354,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             report = screen_fixture(fixture, args.trade_date, args.asof_time)
         else:
             report = backtest_fixture(fixture, args.asof_time, args.days)
-        write_report(report, args.output)
+        write_report(report, args.output, args.format)
         return 0
 
     if args.command == "screen":
         report = screen_live(args)
     else:
         report = backtest_live(args)
-    write_report(report, args.output)
+    write_report(report, args.output, args.format)
     return 0
 
 

@@ -268,6 +268,42 @@ class TailpickerSkillTests(unittest.TestCase):
         self.assertIsInstance(report["watchlist"], list)
         self.assertIsInstance(report["market_notes"], list)
 
+    def test_markdown_renderer_outputs_screen_sections(self):
+        module = self._load_script()
+        report = self._run_fixture("screen")
+        markdown = module.render_markdown_report(report)
+
+        self.assertIn("# A股尾盘选股报告", markdown)
+        self.assertIn("## 正式可买 final_orders", markdown)
+        self.assertIn("## 观察池 watchlist", markdown)
+        self.assertIn("## 市场说明 market_notes", markdown)
+        self.assertIn("不构成投资建议", markdown)
+
+    def test_cli_writes_markdown_when_output_is_md(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "screen.md"
+            fixture = SKILL_DIR / "references" / "fixture_market_week.json"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_PATH),
+                    "screen",
+                    "--fixture",
+                    str(fixture),
+                    "--asof-time",
+                    "14:20",
+                    "--output",
+                    str(output),
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            self.assertIn(str(output), completed.stdout)
+            markdown = output.read_text(encoding="utf-8")
+            self.assertTrue(markdown.startswith("# A股尾盘选股报告"))
+            self.assertIn("## 正式可买 final_orders", markdown)
+
     def test_fixture_backtest_verifies_against_actual_results(self):
         report = self._run_fixture("backtest")
         self.assertEqual(report["mode"], "backtest")

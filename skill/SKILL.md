@@ -16,15 +16,17 @@ This is research automation only. Always preserve the disclaimer that the output
 Run the bundled script first. The live path uses AKShare free public-data interfaces, especially `stock_zh_a_hist_min_em`, `stock_zh_a_hist`, `stock_news_em`, and related market/sector endpoints.
 
 ```bash
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --asof-time 14:20 --output reports/tailpick_today.json
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py backtest --days 5 --asof-time 14:20 --output reports/tailpick_backtest.json
+python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --asof-time 14:20 --output reports/tailpick_today.md
+python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py backtest --days 5 --asof-time 14:20 --output reports/tailpick_backtest.md
 ```
+
+Reports default to Markdown when the output path ends in `.md` or `.markdown`. Use `--format json` or a `.json` path when another program needs structured JSON.
 
 For deterministic validation or when free data APIs are unstable:
 
 ```bash
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --fixture ~/.agents/skills/a-share-tailpicker/references/fixture_market_week.json --asof-time 14:20
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py backtest --fixture ~/.agents/skills/a-share-tailpicker/references/fixture_market_week.json --asof-time 14:20
+python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --fixture ~/.agents/skills/a-share-tailpicker/references/fixture_market_week.json --asof-time 14:20 --output reports/fixture_screen.md
+python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py backtest --fixture ~/.agents/skills/a-share-tailpicker/references/fixture_market_week.json --asof-time 14:20 --output reports/fixture_backtest.md
 ```
 
 ## Workflow
@@ -42,8 +44,9 @@ python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py backtest --fix
    - `final_orders`: strict buyable list. Only this layer can be considered for execution.
    - `watchlist`: observation-only candidates. They have useful tail-session signals but still have blockers or need 14:45-14:50 confirmation.
    - `market_notes`: compact explanation for buyable, observation-only, or quiet days.
-5. If `market_state.state == "halt"` or final orders are empty, report no-buy for execution but still summarize `watchlist` and `market_notes` for daily review.
-6. For review or improvement, run `tailpicker.py backtest`, compare generated picks with the next trading day's actual open/intraday exit result, then update thresholds only when the retrospective points to a repeatable failure.
+5. Prefer Markdown reports for human review. Use JSON only for automated parsing or backtest post-processing.
+6. If `market_state.state == "halt"` or final orders are empty, report no-buy for execution but still summarize `watchlist` and `market_notes` for daily review.
+7. For review or improvement, run `tailpicker.py backtest`, compare generated picks with the next trading day's actual open/intraday exit result, then update thresholds only when the retrospective points to a repeatable failure.
 
 ## C 版 Rules
 
@@ -63,7 +66,7 @@ Core flow:
 Use a local scheduler, Codex automation, cron, launchd, or another orchestrator to invoke:
 
 ```bash
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --asof-time 14:20 --output ~/tailpicker/reports/$(date +%Y%m%d)_1420.json
+python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --asof-time 14:20 --output ~/tailpicker/reports/$(date +%Y%m%d)_1420.md
 ```
 
 Recommended schedule:

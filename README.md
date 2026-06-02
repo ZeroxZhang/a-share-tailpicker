@@ -94,7 +94,7 @@ python3 skill/scripts/tailpicker.py screen \
   --limit 0 \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/tailpick_1420.json
+  --output reports/tailpick_1420.md
 ```
 
 ### 14:50 最终确认
@@ -109,7 +109,7 @@ python3 skill/scripts/tailpicker.py screen \
   --limit 0 \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/tailpick_1450.json
+  --output reports/tailpick_1450.md
 ```
 
 ### 指定股票池
@@ -122,7 +122,7 @@ python3 skill/scripts/tailpicker.py screen \
   --codes 600999,601688,600958 \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/tailpick_selected.json
+  --output reports/tailpick_selected.md
 ```
 
 使用自定义股票池文件：
@@ -133,7 +133,7 @@ python3 skill/scripts/tailpicker.py screen \
   --universe-file universe.txt \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/tailpick_universe.json
+  --output reports/tailpick_universe.md
 ```
 
 `universe.txt` 每行一个代码：
@@ -156,7 +156,7 @@ python3 skill/scripts/tailpicker.py backtest \
   --limit 0 \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/backtest_30d_1450.json
+  --output reports/backtest_30d_1450.md
 ```
 
 参数说明：
@@ -169,7 +169,8 @@ python3 skill/scripts/tailpicker.py backtest \
 | `--limit 0` | 使用默认完整股票池；不限制数量 |
 | `--fetch-timeout` | 单次公开数据接口超时时间 |
 | `--no-eastmoney-fallback` | 跳过较慢的东方财富分钟线 fallback |
-| `--output` | JSON 报告输出路径 |
+| `--output` | 报告输出路径；`.md` 自动输出 Markdown，`.json` 输出 JSON |
+| `--format` | 输出格式，可选 `auto`、`markdown`、`json`；默认 `auto` |
 
 ### 离线 fixture
 
@@ -179,14 +180,14 @@ python3 skill/scripts/tailpicker.py backtest \
 python3 skill/scripts/tailpicker.py screen \
   --fixture skill/references/fixture_market_week.json \
   --asof-time 14:20 \
-  --output reports/fixture_screen.json
+  --output reports/fixture_screen.md
 ```
 
 ```bash
 python3 skill/scripts/tailpicker.py backtest \
   --fixture skill/references/fixture_market_week.json \
   --asof-time 14:20 \
-  --output reports/fixture_backtest.json
+  --output reports/fixture_backtest.md
 ```
 
 ### 规则摘要
@@ -225,10 +226,10 @@ python3 -m unittest tests/test_tailpicker_skill.py
 
 ```bash
 # 14:20
-python3 skill/scripts/tailpicker.py screen --asof-time 14:20 --limit 0 --fetch-timeout 5 --no-eastmoney-fallback --output reports/$(date +%Y%m%d)_1420.json
+python3 skill/scripts/tailpicker.py screen --asof-time 14:20 --limit 0 --fetch-timeout 5 --no-eastmoney-fallback --output reports/$(date +%Y%m%d)_1420.md
 
 # 14:50
-python3 skill/scripts/tailpicker.py screen --asof-time 14:50 --limit 0 --fetch-timeout 5 --no-eastmoney-fallback --output reports/$(date +%Y%m%d)_1450.json
+python3 skill/scripts/tailpicker.py screen --asof-time 14:50 --limit 0 --fetch-timeout 5 --no-eastmoney-fallback --output reports/$(date +%Y%m%d)_1450.md
 ```
 
 执行纪律：
@@ -335,7 +336,7 @@ python3 skill/scripts/tailpicker.py screen \
   --limit 0 \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/tailpick_1420.json
+  --output reports/tailpick_1420.md
 ```
 
 ### 14:50 Final Confirmation
@@ -350,7 +351,7 @@ python3 skill/scripts/tailpicker.py screen \
   --limit 0 \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/tailpick_1450.json
+  --output reports/tailpick_1450.md
 ```
 
 ### Custom Universe
@@ -363,7 +364,7 @@ python3 skill/scripts/tailpicker.py screen \
   --codes 600999,601688,600958 \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/tailpick_selected.json
+  --output reports/tailpick_selected.md
 ```
 
 Use a custom universe file:
@@ -374,7 +375,7 @@ python3 skill/scripts/tailpicker.py screen \
   --universe-file universe.txt \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/tailpick_universe.json
+  --output reports/tailpick_universe.md
 ```
 
 Example `universe.txt`:
@@ -397,7 +398,7 @@ python3 skill/scripts/tailpicker.py backtest \
   --limit 0 \
   --fetch-timeout 5 \
   --no-eastmoney-fallback \
-  --output reports/backtest_30d_1450.json
+  --output reports/backtest_30d_1450.md
 ```
 
 Key options:
@@ -410,7 +411,8 @@ Key options:
 | `--limit 0` | Use the full default universe |
 | `--fetch-timeout` | Timeout for each public data fetch |
 | `--no-eastmoney-fallback` | Skip slower Eastmoney minute-data fallback |
-| `--output` | JSON report path |
+| `--output` | Report path; `.md` writes Markdown automatically, `.json` writes JSON |
+| `--format` | Output format: `auto`, `markdown`, or `json`; default is `auto` |
 
 ### Offline Fixture
 
@@ -420,14 +422,14 @@ Use the fixture when public data APIs are unstable or when you only need determi
 python3 skill/scripts/tailpicker.py screen \
   --fixture skill/references/fixture_market_week.json \
   --asof-time 14:20 \
-  --output reports/fixture_screen.json
+  --output reports/fixture_screen.md
 ```
 
 ```bash
 python3 skill/scripts/tailpicker.py backtest \
   --fixture skill/references/fixture_market_week.json \
   --asof-time 14:20 \
-  --output reports/fixture_backtest.json
+  --output reports/fixture_backtest.md
 ```
 
 ### Rule Summary
@@ -466,10 +468,10 @@ Run twice per trading day:
 
 ```bash
 # 14:20
-python3 skill/scripts/tailpicker.py screen --asof-time 14:20 --limit 0 --fetch-timeout 5 --no-eastmoney-fallback --output reports/$(date +%Y%m%d)_1420.json
+python3 skill/scripts/tailpicker.py screen --asof-time 14:20 --limit 0 --fetch-timeout 5 --no-eastmoney-fallback --output reports/$(date +%Y%m%d)_1420.md
 
 # 14:50
-python3 skill/scripts/tailpicker.py screen --asof-time 14:50 --limit 0 --fetch-timeout 5 --no-eastmoney-fallback --output reports/$(date +%Y%m%d)_1450.json
+python3 skill/scripts/tailpicker.py screen --asof-time 14:50 --limit 0 --fetch-timeout 5 --no-eastmoney-fallback --output reports/$(date +%Y%m%d)_1450.md
 ```
 
 Execution discipline:
