@@ -153,28 +153,43 @@ def time_to_minutes(value: str) -> int:
 
 
 def passes_early_live_quality(stock: Dict[str, Any]) -> bool:
+    # v3.1: 严格硬条件
+    tail_gain = float(stock.get("tail_gain_pct", 0))
+    volume_ratio = float(stock.get("volume_ratio", 0))
     return (
-        float(stock.get("capital_flow_score", 0)) >= 63
-        and float(stock.get("tail_gain_pct", 0)) <= 1.50
-        and float(stock.get("day_position_pct", 100)) <= 90
-        and float(stock.get("price_to_day_high_pct", 0)) <= -0.50
+        float(stock.get("capital_flow_score", 0)) >= 60
+        and 0.8 <= tail_gain <= 2.5
+        and float(stock.get("day_position_pct", 100)) < 75
+        and float(stock.get("price_to_day_high_pct", 0)) <= -0.80
+        and 0.8 <= volume_ratio <= 3.0
         and float(stock.get("last_bar_vol_share_tail_pct", 100)) <= 30
     )
 
 
 def passes_final_live_quality(stock: Dict[str, Any]) -> bool:
-    return float(stock.get("price_to_day_high_pct", 0)) <= -0.80
+    # v3.1: 最终确认仍保持所有硬条件
+    tail_gain = float(stock.get("tail_gain_pct", 0))
+    volume_ratio = float(stock.get("volume_ratio", 0))
+    return (
+        float(stock.get("price_to_day_high_pct", 0)) <= -0.80
+        and 0.8 <= tail_gain <= 2.5
+        and float(stock.get("capital_flow_score", 0)) >= 60
+        and 0.8 <= volume_ratio <= 3.0
+    )
 
 
 def next_day_plan() -> Dict[str, str]:
+    """v3.1 条件卖出策略：基于次日开盘价的条件执行。
+
+    核心逻辑：
+    - 高开≥+0.5%：开盘立即卖出（获利了结）
+    - 低开≤-0.5%：开盘立即止损（控制风险）
+    - 其他情况：+0.5%止盈或收盘止损（时间止损）
+    """
     return {
-        "S1_open_ge_3pct": "立即卖出60%，剩余设+5%止盈；回落至+2%全出",
-        "S2_open_1_to_3pct": "持有观察，设+3%止盈；10:30未冲高则清仓",
-        "S3_open_0_to_1pct": "观察至10:00，未突破开盘价卖50%；10:30仍弱全出",
-        "S4_open_minus1_to_0pct": "给到10:00，未翻红卖50%",
-        "S5_open_minus2_to_minus1pct": "5分钟无反弹卖50%；10:00前未翻红全清",
-        "S6_open_minus3_to_minus2pct": "立即卖70%，剩余10:00前清仓",
-        "S7_open_lt_minus3pct": "立即全部清仓",
+        "open_ge_0.5pct": "开盘≥+0.5%，立即卖出",
+        "open_le_minus0.5pct": "开盘≤-0.5%，立即止损",
+        "other": "正常开盘，+0.5%止盈或收盘止损",
         "force_exit": "除涨停封单稳定外，次日14:50前强制平仓",
     }
 
@@ -230,24 +245,22 @@ def hard_filter(stock: Dict[str, Any]) -> Optional[str]:
     if float(stock.get("price", 0)) <= 0 or float(stock.get("pre_close", 0)) <= 0:
         return "价格数据缺失"
     day_ret = float(stock["price"]) / float(stock["pre_close"]) - 1
-    if day_ret <= -0.07:
-        return "当日跌幅过大"
-    if day_ret >= 0.095:
-        return "接近涨停，流动性和追高风险"
-    if float(stock.get("market_cap_bn", 9999)) < 30:
-        return "流通市值过小"
-    # 改进：前日涨幅过滤（条件性，仅当数据可用时）
+    # v3.1: 尾盘涨幅1%-4%（含1%，不含4%）
+    if not (0.01 <= day_ret < 0.04):
+        return "当日涨幅不在1%-4%范围内"
+    # v3.1: 前日涨幅-2%-2%
     prev_ret = stock.get("prev_day_return")
     if prev_ret is not None:
         prev_ret = float(prev_ret)
-        if prev_ret > 0.06:
-            return "前日涨幅>6%，避免追高"
-        if prev_ret < -0.04:
-            return "前日跌幅>4%，避免抄底"
-    # 改进：涨跌幅分位数过滤（条件性，仅当数据可用时）
-    pct = stock.get("market_percentile")
-    if pct is not None and float(pct) < 0.60:
-        return "涨幅分位数<60%，非市场强势标的"
+        if not (-0.02 <= prev_ret <= 0.02):
+            return "前日涨幅不在-2%-2%范围内"
+    # v3.1: 量比0.8-3.0
+    volume_ratio = float(stock.get("volume_ratio", 0))
+    if not (0.8 <= volume_ratio <= 3.0):
+        return "量比不在0.8-3.0范围内"
+    # v3.1: 流通市值≥30亿
+    if float(stock.get("market_cap_bn", 9999)) < 30:
+        return "流通市值过小"
     return None
 
 
@@ -269,18 +282,31 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
     pe = stock.get("pe")
     hot_rank = stock.get("hot_rank")
 
-    if tail_gain < 0.5:
+    if tail_gain < 0.8 or tail_gain > 2.5:
         return None
-    if not (1.05 <= volume_ratio <= 5.0):
+    if not (0.8 <= volume_ratio <= 3.0):
         return None
     if not (0.10 <= tail_vol_ratio <= 0.45):
         return None
     if pattern in {"negative", "none", ""}:
         return None
-    # 改进：涨跌幅分位数过滤（条件性，仅当数据可用时）
-    mp = stock.get("market_percentile")
-    if mp is not None and float(mp) < 0.60:
+    # v3.1: 价格距离日内高点至少0.8%
+    price_to_day_high = float(stock.get("price_to_day_high_pct", 0))
+    if price_to_day_high > -0.8:
         return None
+    # v3.1: 日内位置<75%
+    day_position = float(stock.get("day_position_pct", 100))
+    if day_position >= 75:
+        return None
+    # v3.1: 资金流代理分≥60
+    if capital_flow < 60:
+        return None
+    # v3.1: 前日涨幅-2%-2%
+    prev_ret = stock.get("prev_day_return")
+    if prev_ret is not None:
+        prev_ret = float(prev_ret)
+        if not (-0.02 <= prev_ret <= 0.02):
+            return None
     # 改进：市场状态前置过滤（当明确为halt时直接返回）
     state = market.get("state", "range")
     if state == "halt":
@@ -301,8 +327,7 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
     else:
         ma_score = 2
 
-    # C-version normalized scoring, intentionally simple and explainable.
-    # 改进：优化评分权重，增加新因子
+    # v3.1: 简化评分，聚焦核心因子
     score = 0.0
     score += min(25, pattern_score)
     score += min(20, capital_flow * 0.20)
@@ -313,17 +338,14 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
     score += min(4, max(0, news_sentiment) * 4)
     if hot_rank is not None and float(hot_rank) <= 100:
         score += 3
-    # 改进：前日涨幅因子（权重5%）
+    # v3.1: 前日温和因子（-2%到2%）
     prev_ret = stock.get("prev_day_return")
     if prev_ret is not None:
         prev_ret = float(prev_ret)
-        if 0 <= prev_ret <= 0.03:
-            score += 5
-            reasons.append(f"前日温和上涨{prev_ret:.1%}，momentum延续")
-        elif prev_ret > 0.05:
-            score -= 5
-            warnings.append("前日涨幅过大，避免追高")
-    # 改进：板块动量因子（权重10%）
+        if -0.02 <= prev_ret <= 0.02:
+            score += 3
+            reasons.append(f"前日温和波动{prev_ret:.1%}，momentum平稳")
+    # v3.1: 板块动量因子
     sm = stock.get("sector_momentum")
     if sm is not None:
         sm = float(sm)
@@ -336,7 +358,7 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
 
     # state已在前面定义
     if state == "bear":
-        score -= 12  # 改进：弱市扣分从8提高到12
+        score -= 12
         warnings.append("弱市状态，仓位系数下调")
     elif state == "bull":
         score += 3
@@ -364,13 +386,13 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
         cross_checks.append("sector")
     if news_sentiment > 0 or (hot_rank is not None and float(hot_rank) <= 100):
         cross_checks.append("sentiment_news")
-    # 改进：板块动量作为交叉验证项
+    # v3.1: 板块动量作为交叉验证项
     sm = stock.get("sector_momentum")
     if sm is not None and float(sm) > 0.01:
         cross_checks.append("sector_momentum")
-    # 改进：前日涨幅作为交叉验证项
+    # v3.1: 前日涨幅作为交叉验证项
     prev_ret = stock.get("prev_day_return")
-    if prev_ret is not None and 0 <= float(prev_ret) <= 0.03:
+    if prev_ret is not None and -0.02 <= float(prev_ret) <= 0.02:
         cross_checks.append("prev_momentum")
 
     if len(cross_checks) < 2:
@@ -465,19 +487,34 @@ def watch_blockers(stock: Dict[str, Any], asof_time: str, source: str, rank: Opt
     blockers: List[str] = []
     asof_minutes = time_to_minutes(asof_time)
     if source == "akshare" and asof_minutes <= time_to_minutes("14:20"):
-        if float(stock.get("capital_flow_score", 0)) < 63:
-            blockers.append("资金代理未达正式买入门槛63")
-        if float(stock.get("tail_gain_pct", 0)) > 1.50:
-            blockers.append("14:20尾盘涨幅偏热，等待复核")
-        if float(stock.get("day_position_pct", 100)) > 90:
-            blockers.append("日内位置偏高")
-        if float(stock.get("price_to_day_high_pct", 0)) > -0.50:
-            blockers.append("价格距离日内高点不足0.5%")
+        # v3.1: 资金代理分≥60
+        if float(stock.get("capital_flow_score", 0)) < 60:
+            blockers.append("资金代理未达正式买入门槛60")
+        # v3.1: 尾盘涨幅0.8%-2.5%
+        tail_gain = float(stock.get("tail_gain_pct", 0))
+        if not (0.8 <= tail_gain <= 2.5):
+            blockers.append("尾盘涨幅不在0.8%-2.5%范围内")
+        # v3.1: 日内位置<75%
+        if float(stock.get("day_position_pct", 100)) >= 75:
+            blockers.append("日内位置≥75%")
+        # v3.1: 价格距离日内高点至少0.8%
+        if float(stock.get("price_to_day_high_pct", 0)) > -0.80:
+            blockers.append("价格距离日内高点不足0.8%")
+        # v3.1: 量比0.8-3.0
+        volume_ratio = float(stock.get("volume_ratio", 0))
+        if not (0.8 <= volume_ratio <= 3.0):
+            blockers.append("量比不在0.8-3.0范围内")
         if float(stock.get("last_bar_vol_share_tail_pct", 100)) > 30:
             blockers.append("最后一根K线量能占比偏高")
     elif source == "akshare" and asof_minutes >= time_to_minutes("14:45"):
+        # v3.1: 最终确认时仍保持严格条件
         if float(stock.get("price_to_day_high_pct", 0)) > -0.80:
             blockers.append("距离日内高点不足0.8%，不进入正式买入")
+        tail_gain = float(stock.get("tail_gain_pct", 0))
+        if not (0.8 <= tail_gain <= 2.5):
+            blockers.append("尾盘涨幅不在0.8%-2.5%范围内")
+        if float(stock.get("capital_flow_score", 0)) < 60:
+            blockers.append("资金代理分<60")
 
     if rank is not None and rank > 5:
         blockers.append("评分排名未进入正式买入前5")
@@ -490,12 +527,13 @@ def watch_upgrade_triggers(asof_time: str, source: str) -> List[str]:
     if source == "akshare" and time_to_minutes(asof_time) <= time_to_minutes("14:20"):
         return [
             "14:45-14:50复核仍保持分时形态和板块共振",
-            "资金代理分>=63且尾盘涨幅<=1.5%",
+            "资金代理分>=60且尾盘涨幅0.8%-2.5%",
             "价格距离日内高点至少0.8%后才考虑正式买入",
+            "日内位置<75%且量比0.8-3.0",
         ]
     if source == "akshare" and time_to_minutes(asof_time) >= time_to_minutes("14:45"):
         return [
-            "仅当进入评分前5且距离日内高点至少0.8%时升级为final_orders",
+            "仅当进入评分前5且满足所有v3.1硬条件时升级为final_orders",
             "未升级则不追价，次日重新评估",
         ]
     return ["满足正式评分、交叉验证和最终排序后才升级为final_orders"]
@@ -522,19 +560,29 @@ def watch_item_from_decision(decision: StockDecision, asof_time: str, source: st
 def is_watchlist_feature_candidate(stock: Dict[str, Any]) -> bool:
     return (
         hard_filter(stock) is None
-        and float(stock.get("tail_gain_pct", 0)) >= 0.15
-        and float(stock.get("volume_ratio", 0)) >= 1.0
-        and float(stock.get("tail_vol_ratio", 0)) <= 0.55
+        and float(stock.get("tail_gain_pct", 0)) >= 0.8
+        and float(stock.get("tail_gain_pct", 0)) <= 2.5
+        and float(stock.get("volume_ratio", 0)) >= 0.8
+        and float(stock.get("volume_ratio", 0)) <= 3.0
+        and float(stock.get("capital_flow_score", 0)) >= 60
         and str(stock.get("pattern", "none")) != "negative"
     )
 
 
 def watch_score_from_features(stock: Dict[str, Any]) -> float:
     score = 0.0
-    score += min(24, max(0, float(stock.get("tail_gain_pct", 0))) * 8)
-    score += min(18, max(0, float(stock.get("volume_ratio", 0)) - 1) * 6)
-    score += min(20, float(stock.get("capital_flow_score", 0)) * 0.20)
-    score += min(20, float(stock.get("sector_score", 0)))
+    tail_gain = float(stock.get("tail_gain_pct", 0))
+    volume_ratio = float(stock.get("volume_ratio", 0))
+    capital_flow = float(stock.get("capital_flow_score", 0))
+    sector_score = float(stock.get("sector_score", 0))
+    # v3.1: 只在0.8-2.5%范围内计分
+    if 0.8 <= tail_gain <= 2.5:
+        score += min(24, tail_gain * 8)
+    # v3.1: 量比0.8-3.0
+    if 0.8 <= volume_ratio <= 3.0:
+        score += min(18, (volume_ratio - 1) * 6)
+    score += min(20, capital_flow * 0.20)
+    score += min(20, sector_score)
     if str(stock.get("pattern", "none")) not in {"none", "", "negative"}:
         score += 10
     return score
@@ -709,35 +757,29 @@ def verify_decision(decision: StockDecision) -> Dict[str, Any]:
     stock = decision.raw
     entry = decision.suggested_price
     next_open = float(stock.get("next_open", 0) or 0)
-    next_1000 = float(stock.get("next_1000", 0) or 0)
     next_1450 = float(stock.get("next_1450", 0) or 0)
     if not next_open:
         return {"verification": "missing", "actual_return_pct": None, "exit_reason": "缺少次日真实价格"}
 
     open_return = next_open / entry - 1
-    if open_return >= 0.03:
-        exit_price, exit_reason = next_open, "S1大幅高开，按开盘卖出60%验证"
-    elif open_return >= 0.01:
-        exit_price, exit_reason = next_1000, "S2温和高开，10:00验证"
-    elif open_return >= 0:
-        exit_price, exit_reason = next_1000, "S3平开微涨，10:00验证"
-    elif open_return >= -0.01:
-        exit_price, exit_reason = next_1000, "S4微低开，10:00验证"
-    elif open_return >= -0.02:
-        exit_price, exit_reason = next_open, "S5中度低开，保守按开盘止损验证"
-    elif open_return >= -0.03:
-        exit_price, exit_reason = next_open, "S6大幅低开，开盘止损验证"
+    # v3.1: 条件卖出策略
+    if open_return >= 0.005:
+        exit_price, exit_reason = next_open, "高开≥+0.5%，开盘获利了结"
+    elif open_return <= -0.005:
+        exit_price, exit_reason = next_open, "低开≤-0.5%，开盘止损"
     else:
-        exit_price, exit_reason = next_open, "S7极端低开，开盘清仓验证"
-
-    if next_1450 and exit_reason.startswith(("S2", "S3")):
-        # If the morning did not improve, the C-version time stop exits later.
-        exit_price = max(exit_price, next_1450 if next_1450 < entry else exit_price)
-
-    # 改进：增加盘中反弹保护（当10:00价格高于entry时，延长持有）
-    if next_1000 and exit_reason.startswith(("S4", "S5")) and next_1000 >= entry:
-        exit_price = next_1000
-        exit_reason = f"{exit_reason}（10:00翻红，延长持有）"
+        # 正常开盘，+0.5%止盈或收盘止损
+        if next_1450:
+            # 如果盘中达到+0.5%止盈
+            if next_1450 >= entry * 1.005:
+                exit_price = entry * 1.005
+                exit_reason = "盘中达到+0.5%止盈"
+            else:
+                exit_price = next_1450
+                exit_reason = "未达止盈，收盘止损"
+        else:
+            exit_price = next_open
+            exit_reason = "缺少盘中数据，按开盘处理"
 
     cost = 0.0025
     actual_return = exit_price / entry - 1 - cost
@@ -1126,32 +1168,23 @@ def verify_live_order(order: Dict[str, Any], next_trade_date: str) -> Dict[str, 
             return float(bars["收盘"].iloc[0])
         return float(subset["收盘"].iloc[-1])
 
-    price_1000 = close_at_or_before("10:00")
-    price_1030 = close_at_or_before("10:30")
     price_1450 = close_at_or_before("14:50")
+    # 获取日内最高价用于判断止盈
+    high_price = float(bars["最高"].max()) if "最高" in bars else 0
 
-    if open_return >= 0.03:
-        exit_price, exit_reason = next_open, "S1大幅高开，按开盘卖出60%验证"
-    elif open_return >= 0.01:
-        exit_price, exit_reason = max(price_1000, price_1030), "S2温和高开，按10:00/10:30较优执行验证"
-    elif open_return >= 0:
-        exit_price, exit_reason = price_1030 if price_1000 >= next_open else price_1000, "S3平开微涨，按时间止损验证"
-    elif open_return >= -0.01:
-        exit_price, exit_reason = price_1000 if price_1000 >= entry else price_1450, "S4微幅低开，按10:00翻红/尾盘止损验证"
-    elif open_return >= -0.02:
-        exit_price, exit_reason = next_open if price_1000 < entry else price_1000, "S5中度低开，按5分钟/10:00止损验证"
-    elif open_return >= -0.03:
-        exit_price, exit_reason = next_open, "S6大幅低开，按开盘止损验证"
+    # v3.1: 条件卖出策略
+    if open_return >= 0.005:
+        exit_price, exit_reason = next_open, "高开≥+0.5%，开盘获利了结"
+    elif open_return <= -0.005:
+        exit_price, exit_reason = next_open, "低开≤-0.5%，开盘止损"
     else:
-        exit_price, exit_reason = next_open, "S7极端低开，按开盘清仓验证"
-
-    # 改进：增加盘中反弹保护（当10:00价格高于entry时，延长持有）
-    if exit_reason.startswith("S5") and price_1000 >= entry:
-        exit_price = price_1000
-        exit_reason = "S5改进：10:00翻红，延长持有"
-    if exit_reason.startswith("S4") and price_1000 >= entry:
-        exit_price = price_1030 if price_1030 >= entry else price_1000
-        exit_reason = "S4改进：10:00翻红，持有到10:30"
+        # 正常开盘，+0.5%止盈或收盘止损
+        if high_price >= entry * 1.005:
+            exit_price = entry * 1.005
+            exit_reason = "盘中达到+0.5%止盈"
+        else:
+            exit_price = price_1450
+            exit_reason = "未达止盈，收盘止损"
 
     cost = 0.0025
     actual_return = exit_price / entry - 1 - cost

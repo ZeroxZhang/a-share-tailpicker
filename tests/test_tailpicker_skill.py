@@ -49,32 +49,36 @@ class TailpickerSkillTests(unittest.TestCase):
         self.assertGreaterEqual(stocks[1]["sector_score"], 14)
         self.assertLess(stocks[2]["sector_score"], 8)
 
-    def test_live_1420_rejects_non_s_grade_as_watchlist_only(self):
+    def test_live_1420_c_grade_is_filtered_and_not_watchlist(self):
         module = self._load_script()
-        market = {"state": "range", "breadth_up_ratio": None, "index_tail_return_pct": None}
+        market = {"state": "range", "breadth_up_ratio": 0.55, "index_tail_return_pct": 0.1}
         stock = {
             "code": "600958",
             "name": "600958",
             "sector": "证券",
             "price": 10.0,
             "pre_close": 9.9,
-            "tail_gain_pct": 0.8,
-            "volume_ratio": 2.8,
+            "tail_gain_pct": 1.2,
+            "volume_ratio": 2.0,
             "tail_vol_ratio": 0.24,
             "turnover_rate": 3.0,
             "amount_mn": 1200,
             "market_cap_bn": 500,
             "pe": None,
             "ma_state": "range",
-            "pattern": "breakout",
-            "capital_flow_score": 60,
-            "sector_score": 20,
+            "pattern": "pullback",
+            "capital_flow_score": 50,
+            "sector_score": 8,
             "news_sentiment": 0,
             "hot_rank": None,
+            "day_position_pct": 70,
+            "price_to_day_high_pct": -1.0,
+            "last_bar_vol_share_tail_pct": 8,
         }
         decision = module.score_stock(stock, market, "14:20", "akshare")
-        self.assertIsNotNone(decision)
-        self.assertEqual([], module.select_final_orders([decision], "14:20", "akshare"))
+        # C等级（score < 60）被过滤，不进入watchlist或final_orders
+        self.assertIsNone(decision)
+
 
     def test_live_1420_accepts_strong_a_when_not_overheated(self):
         module = self._load_script()
@@ -85,7 +89,7 @@ class TailpickerSkillTests(unittest.TestCase):
             "sector": "证券",
             "price": 10.0,
             "pre_close": 9.9,
-            "tail_gain_pct": 0.7,
+            "tail_gain_pct": 1.2,
             "volume_ratio": 1.9,
             "tail_vol_ratio": 0.22,
             "turnover_rate": 3.0,
@@ -98,8 +102,8 @@ class TailpickerSkillTests(unittest.TestCase):
             "sector_score": 20,
             "news_sentiment": 0,
             "hot_rank": None,
-            "day_position_pct": 82,
-            "price_to_day_high_pct": -0.8,
+            "day_position_pct": 70,
+            "price_to_day_high_pct": -1.0,
             "last_bar_vol_share_tail_pct": 8,
         }
         decision = module.score_stock(stock, market, "14:20", "akshare")
@@ -115,8 +119,8 @@ class TailpickerSkillTests(unittest.TestCase):
             "sector": "证券",
             "price": 10.0,
             "pre_close": 9.9,
-            "tail_gain_pct": 0.8,
-            "volume_ratio": 2.8,
+            "tail_gain_pct": 1.2,
+            "volume_ratio": 2.0,
             "tail_vol_ratio": 0.24,
             "turnover_rate": 3.0,
             "amount_mn": 1200,
@@ -128,8 +132,8 @@ class TailpickerSkillTests(unittest.TestCase):
             "sector_score": 20,
             "news_sentiment": 0,
             "hot_rank": None,
-            "day_position_pct": 82,
-            "price_to_day_high_pct": -0.8,
+            "day_position_pct": 70,
+            "price_to_day_high_pct": -1.0,
             "last_bar_vol_share_tail_pct": 8,
         }
         decision = module.score_stock(stock, market, "14:20", "akshare")
@@ -149,7 +153,7 @@ class TailpickerSkillTests(unittest.TestCase):
             "sector": "证券",
             "price": 10.0,
             "pre_close": 9.9,
-            "tail_gain_pct": 0.7,
+            "tail_gain_pct": 1.2,
             "volume_ratio": 1.9,
             "tail_vol_ratio": 0.22,
             "turnover_rate": 3.0,
@@ -162,14 +166,13 @@ class TailpickerSkillTests(unittest.TestCase):
             "sector_score": 20,
             "news_sentiment": 0,
             "hot_rank": None,
-            "day_position_pct": 82,
+            "day_position_pct": 70,
             "price_to_day_high_pct": -0.6,
             "last_bar_vol_share_tail_pct": 8,
         }
+        # v3.1: price_to_day_high > -0.8 被硬过滤，直接拒绝
         decision = module.score_stock(stock, market, "14:50", "akshare")
-        self.assertIsNotNone(decision)
-        orders = module.select_final_orders([decision], "14:50", "akshare")
-        self.assertEqual([], orders)
+        self.assertIsNone(decision)
 
     def test_live_1450_accepts_pullback_below_intraday_high(self):
         module = self._load_script()
@@ -180,7 +183,7 @@ class TailpickerSkillTests(unittest.TestCase):
             "sector": "证券",
             "price": 10.0,
             "pre_close": 9.9,
-            "tail_gain_pct": 0.7,
+            "tail_gain_pct": 1.2,
             "volume_ratio": 1.9,
             "tail_vol_ratio": 0.22,
             "turnover_rate": 3.0,
@@ -193,8 +196,8 @@ class TailpickerSkillTests(unittest.TestCase):
             "sector_score": 20,
             "news_sentiment": 0,
             "hot_rank": None,
-            "day_position_pct": 82,
-            "price_to_day_high_pct": -0.8,
+            "day_position_pct": 70,
+            "price_to_day_high_pct": -1.0,
             "last_bar_vol_share_tail_pct": 8,
         }
         decision = module.score_stock(stock, market, "14:50", "akshare")
@@ -203,19 +206,19 @@ class TailpickerSkillTests(unittest.TestCase):
         self.assertEqual("600999", orders[0]["code"])
         self.assertEqual("A", orders[0]["grade"])
 
-    def test_live_1450_final_gate_does_not_backfill_lower_ranked_candidates(self):
+    def test_live_1450_strict_hard_filter_excludes_non_compliant_candidates(self):
         module = self._load_script()
-        market = {"state": "range", "breadth_up_ratio": None, "index_tail_return_pct": None}
+        market = {"state": "range", "breadth_up_ratio": 0.55, "index_tail_return_pct": 0.1}
 
-        def stock(code, capital_flow_score, sector_score, price_to_day_high_pct):
+        def stock(code, price_to_day_high_pct):
             return {
                 "code": code,
                 "name": code,
                 "sector": "证券",
                 "price": 10.0,
                 "pre_close": 9.9,
-                "tail_gain_pct": 0.8,
-                "volume_ratio": 2.4,
+                "tail_gain_pct": 1.2,
+                "volume_ratio": 2.0,
                 "tail_vol_ratio": 0.22,
                 "turnover_rate": 3.0,
                 "amount_mn": 1200,
@@ -223,29 +226,31 @@ class TailpickerSkillTests(unittest.TestCase):
                 "pe": None,
                 "ma_state": "bull",
                 "pattern": "breakout",
-                "capital_flow_score": capital_flow_score,
-                "sector_score": sector_score,
-                "news_sentiment": 0,
-                "hot_rank": None,
-                "day_position_pct": 82,
+                "capital_flow_score": 75,
+                "sector_score": 15,
+                "news_sentiment": 0.5,
+                "hot_rank": 50,
+                "day_position_pct": 70,
                 "price_to_day_high_pct": price_to_day_high_pct,
                 "last_bar_vol_share_tail_pct": 8,
             }
 
-        high_ranked_near_high = [
-            stock(f"60099{i}", 90 - i, 20, -0.6)
-            for i in range(5)
-        ]
-        lower_ranked_pullback = stock("600489", 64, 14, -1.2)
+        # 4个候选因price_to_day_high > -0.8被硬过滤
+        filtered_candidates = [stock(f"60099{i}", -0.6) for i in range(4)]
+        # 1个候选通过硬过滤
+        compliant_candidate = stock("600489", -1.2)
         decisions = [
             module.score_stock(item, market, "14:50", "akshare")
-            for item in high_ranked_near_high + [lower_ranked_pullback]
+            for item in filtered_candidates + [compliant_candidate]
         ]
         decisions = [decision for decision in decisions if decision]
 
-        self.assertEqual(6, len(decisions))
+        # 只有1个通过硬过滤
+        self.assertEqual(1, len(decisions))
         orders = module.select_final_orders(decisions, "14:50", "akshare")
-        self.assertEqual([], orders)
+        # 通过硬过滤的候选进入final_orders
+        self.assertEqual(1, len(orders))
+        self.assertEqual("600489", orders[0]["code"])
 
     def test_fixture_screen_outputs_reasons_prices_and_exit_plan(self):
         report = self._run_fixture("screen")

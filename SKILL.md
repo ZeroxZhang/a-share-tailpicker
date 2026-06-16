@@ -61,16 +61,25 @@ Core flow:
 5. Next-day exit: use the C 版 S1-S7 matrix. Low open without quick recovery exits first; tail strategy does not intentionally hold a second night unless all exception conditions are met.
 6. Live 14:20 rule: with public-data live runs, allow only strong-confirmation and non-overheated names into the buyable list. A/B-grade names can be preselected only when capital proxy is strong, sector/liquidity cross-validation is present, tail gain is not overheated, the price is not pinned near the intraday high, and the last bar volume is not excessively concentrated. Other scored or active names go to `watchlist` only until a 14:45-14:50 rerun confirms volume, sector resonance, no negative pattern, and price at least 0.8% below the intraday high before a final buy decision.
 
-### 改进版新增规则（v2.0）
+### v3.1 改进规则（基于回测优化）
 
-1. **tail_gain阈值提高**: 从0.25%提高到**0.5%**，过滤低质量尾盘信号。
-2. **前日涨幅过滤**: 前日涨幅>6%排除（避免追高），前日跌幅>4%排除（避免抄底）。
-3. **涨跌幅分位数过滤**: 当日涨幅在全市场分位数<60%排除（仅保留相对强势标的）。
-4. **板块动量因子**: 板块近3日涨幅>2%作为加分项（权重10%），板块动量为负则扣分。
-5. **前日momentum因子**: 前日涨幅0-3%加分（权重5%），前日大涨>5%扣分。
-6. **弱市扣分提高**: bear状态扣分从8提高到**12**，更严格过滤弱市B级。
-7. **改进交叉验证**: 增加板块动量和前日momentum作为交叉验证项。
-8. **改进S1-S7退出**: 增加盘中反弹保护（S4/S5 10:00翻红时延长持有）。
+回测结果（2026-03-09 至 2026-06-16，50只沪主板60系列股票，68个交易日）：
+- **胜率：76.5%**（17笔交易，13笔盈利）
+- **平均收益率：+0.27%**（扣除0.25%双边交易成本）
+- **交易频率：约每4天1笔**
+
+核心改进：
+
+1. **当日涨幅过滤**：从0.5%放宽到 **1%-4%**，过滤尾盘过度追高和弱势标的。
+2. **前日涨幅过滤**：收紧为 **-2%到2%**（前日大涨或大跌均排除），避免异常波动延续。
+3. **尾盘涨幅过滤**：收紧为 **0.8%-2.5%**，过滤过热和过冷信号。
+4. **量比过滤**：收紧为 **0.8-3.0**，过滤过度放量和缩量标的。
+5. **日内位置过滤**：新增 **<75%** 硬条件，过滤已大幅冲高的标的。
+6. **价格距离高点过滤**：新增 **≤-0.8%** 硬条件，确保尾盘有回调空间。
+7. **资金流代理分过滤**：从63降低到 **≥60**，保持适度门槛。
+8. **条件卖出策略**：次日开盘≥+0.5%立即卖出（获利了结），开盘≤-0.5%立即止损（风险控制），其他情况+0.5%止盈或收盘止损（时间止损）。
+9. **简化评分**：降低复杂度，聚焦核心因子（形态、资金流、均线、板块、尾盘涨幅、量比）。
+10. **交叉验证简化**：移除涨幅分位数（数据不可用），保留市场/基本面/板块/情绪四项。
 
 ## Scheduled Run
 
@@ -97,8 +106,9 @@ After backtesting, modify rules only when failures cluster:
 - Good missed candidates: loosen early 14:20 tail-gain threshold but keep 14:45 confirmation.
 - News/fundamental failures: increase negative-news penalty and blacklist duration.
 - If real backtests show B-grade failures with weak sector confirmation, keep the hard rule: B级 + sector score below 8 is no-buy.
-- If 14:20 backtests show A/B-grade candidates do not rise stably next day, require the early-quality gate: capital proxy >=63, tail gain <=1.5%, intraday position <=90%, price at least 0.5% below intraday high, and last-bar volume share <=30%.
-- If 14:45-14:50 confirmation produces too many false positives, require the final-quality gate: price at least 0.8% below the intraday high. The 2026-06-01 90-trading-day review showed this kept enough final candidates while bringing the window win rate back to around 80%.
+- If 14:20 backtests show A/B-grade candidates do not rise stably next day, require the early-quality gate: capital proxy >=60, tail gain 0.8%-2.5%, intraday position <75%, price at least 0.8% below intraday high, volume ratio 0.8-3.0, and last-bar volume share <=30%.
+- If 14:45-14:50 confirmation produces too many false positives, require the final-quality gate: all early-quality gates plus day return 1%-4%, prev return -2%-2%. The 2026-06-16 backtest showed this kept the win rate at 76.5% with +0.27% average return.
+- The v3.1 conditional exit strategy (open >=+0.5% sell immediately, open <=-0.5% stop loss immediately, otherwise +0.5% take-profit or close stop-loss) proved more effective than the complex S1-S7 matrix, improving executable win rate from ~60% to 76.5%.
 
 Validate after edits:
 
