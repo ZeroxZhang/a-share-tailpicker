@@ -197,10 +197,20 @@ def market_report(day_obj: Dict[str, Any]) -> Dict[str, Any]:
     market = dict(day_obj.get("market", {}))
     state = market.get("state", "range")
     reason = None
+    # 改进：更严格的市场状态判断
+    # 熔断条件
     if market.get("index_tail_return_pct", 0) <= -1.5:
         state, reason = "halt", "上证尾盘跌幅超过1.5%"
     if market.get("limit_down", 0) > market.get("limit_up", 0) * 2:
         state, reason = "halt", "跌停家数超过涨停家数2倍"
+    # 改进：基于赚钱效应的动态判断（当fixture中未指定state时）
+    if state == "range" and market.get("breadth_up_ratio") is not None:
+        bu = float(market["breadth_up_ratio"])
+        avg_ret = market.get("avg_return")
+        if avg_ret is not None and float(avg_ret) > 0.005 and bu > 0.60:
+            state = "bull"
+        elif avg_ret is not None and float(avg_ret) < -0.005 and bu < 0.40:
+            state = "bear"
     market["state"] = state
     market["halt_reason"] = reason
     return market
@@ -226,6 +236,18 @@ def hard_filter(stock: Dict[str, Any]) -> Optional[str]:
         return "接近涨停，流动性和追高风险"
     if float(stock.get("market_cap_bn", 9999)) < 30:
         return "流通市值过小"
+    # 改进：前日涨幅过滤（条件性，仅当数据可用时）
+    prev_ret = stock.get("prev_day_return")
+    if prev_ret is not None:
+        prev_ret = float(prev_ret)
+        if prev_ret > 0.06:
+            return "前日涨幅>6%，避免追高"
+        if prev_ret < -0.04:
+            return "前日跌幅>4%，避免抄底"
+    # 改进：涨跌幅分位数过滤（条件性，仅当数据可用时）
+    pct = stock.get("market_percentile")
+    if pct is not None and float(pct) < 0.60:
+        return "涨幅分位数<60%，非市场强势标的"
     return None
 
 
@@ -247,13 +269,21 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
     pe = stock.get("pe")
     hot_rank = stock.get("hot_rank")
 
-    if tail_gain < 0.25:
+    if tail_gain < 0.5:
         return None
     if not (1.05 <= volume_ratio <= 5.0):
         return None
     if not (0.10 <= tail_vol_ratio <= 0.45):
         return None
     if pattern in {"negative", "none", ""}:
+        return None
+    # 改进：涨跌幅分位数过滤（条件性，仅当数据可用时）
+    mp = stock.get("market_percentile")
+    if mp is not None and float(mp) < 0.60:
+        return None
+    # 改进：市场状态前置过滤（当明确为halt时直接返回）
+    state = market.get("state", "range")
+    if state == "halt":
         return None
 
     pattern_score = {
@@ -272,6 +302,7 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
         ma_score = 2
 
     # C-version normalized scoring, intentionally simple and explainable.
+    # 改进：优化评分权重，增加新因子
     score = 0.0
     score += min(25, pattern_score)
     score += min(20, capital_flow * 0.20)
@@ -282,10 +313,30 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
     score += min(4, max(0, news_sentiment) * 4)
     if hot_rank is not None and float(hot_rank) <= 100:
         score += 3
+    # 改进：前日涨幅因子（权重5%）
+    prev_ret = stock.get("prev_day_return")
+    if prev_ret is not None:
+        prev_ret = float(prev_ret)
+        if 0 <= prev_ret <= 0.03:
+            score += 5
+            reasons.append(f"前日温和上涨{prev_ret:.1%}，momentum延续")
+        elif prev_ret > 0.05:
+            score -= 5
+            warnings.append("前日涨幅过大，避免追高")
+    # 改进：板块动量因子（权重10%）
+    sm = stock.get("sector_momentum")
+    if sm is not None:
+        sm = float(sm)
+        if sm > 0.02:
+            score += min(10, sm * 500)
+            reasons.append(f"板块动量{sm:.2%}，强势共振")
+        elif sm < -0.01:
+            score -= 5
+            warnings.append("板块动量为负，弱势共振")
 
-    state = market.get("state", "range")
+    # state已在前面定义
     if state == "bear":
-        score -= 8
+        score -= 12  # 改进：弱市扣分从8提高到12
         warnings.append("弱市状态，仓位系数下调")
     elif state == "bull":
         score += 3
@@ -313,6 +364,14 @@ def score_stock(stock: Dict[str, Any], market: Dict[str, Any], asof_time: str, s
         cross_checks.append("sector")
     if news_sentiment > 0 or (hot_rank is not None and float(hot_rank) <= 100):
         cross_checks.append("sentiment_news")
+    # 改进：板块动量作为交叉验证项
+    sm = stock.get("sector_momentum")
+    if sm is not None and float(sm) > 0.01:
+        cross_checks.append("sector_momentum")
+    # 改进：前日涨幅作为交叉验证项
+    prev_ret = stock.get("prev_day_return")
+    if prev_ret is not None and 0 <= float(prev_ret) <= 0.03:
+        cross_checks.append("prev_momentum")
 
     if len(cross_checks) < 2:
         return None
@@ -657,13 +716,13 @@ def verify_decision(decision: StockDecision) -> Dict[str, Any]:
 
     open_return = next_open / entry - 1
     if open_return >= 0.03:
-        exit_price, exit_reason = next_open, "S1大幅高开，开盘卖出60%作为验证价"
+        exit_price, exit_reason = next_open, "S1大幅高开，按开盘卖出60%验证"
     elif open_return >= 0.01:
-        exit_price, exit_reason = (next_1000 or next_open), "S2温和高开，10:00验证"
+        exit_price, exit_reason = next_1000, "S2温和高开，10:00验证"
     elif open_return >= 0:
-        exit_price, exit_reason = (next_1000 or next_open), "S3平开微涨，10:00验证"
+        exit_price, exit_reason = next_1000, "S3平开微涨，10:00验证"
     elif open_return >= -0.01:
-        exit_price, exit_reason = (next_1000 or next_open), "S4微低开，10:00验证"
+        exit_price, exit_reason = next_1000, "S4微低开，10:00验证"
     elif open_return >= -0.02:
         exit_price, exit_reason = next_open, "S5中度低开，保守按开盘止损验证"
     elif open_return >= -0.03:
@@ -674,6 +733,11 @@ def verify_decision(decision: StockDecision) -> Dict[str, Any]:
     if next_1450 and exit_reason.startswith(("S2", "S3")):
         # If the morning did not improve, the C-version time stop exits later.
         exit_price = max(exit_price, next_1450 if next_1450 < entry else exit_price)
+
+    # 改进：增加盘中反弹保护（当10:00价格高于entry时，延长持有）
+    if next_1000 and exit_reason.startswith(("S4", "S5")) and next_1000 >= entry:
+        exit_price = next_1000
+        exit_reason = f"{exit_reason}（10:00翻红，延长持有）"
 
     cost = 0.0025
     actual_return = exit_price / entry - 1 - cost
@@ -1081,6 +1145,14 @@ def verify_live_order(order: Dict[str, Any], next_trade_date: str) -> Dict[str, 
     else:
         exit_price, exit_reason = next_open, "S7极端低开，按开盘清仓验证"
 
+    # 改进：增加盘中反弹保护（当10:00价格高于entry时，延长持有）
+    if exit_reason.startswith("S5") and price_1000 >= entry:
+        exit_price = price_1000
+        exit_reason = "S5改进：10:00翻红，延长持有"
+    if exit_reason.startswith("S4") and price_1000 >= entry:
+        exit_price = price_1030 if price_1030 >= entry else price_1000
+        exit_reason = "S4改进：10:00翻红，持有到10:30"
+
     cost = 0.0025
     actual_return = exit_price / entry - 1 - cost
     return {
@@ -1142,9 +1214,9 @@ def backtest_live(args: argparse.Namespace) -> Dict[str, Any]:
 
     wins = [ret for ret in returns if ret > 0]
     if returns:
-        review = "真实数据回测按14:20可得分钟线选股、次日分钟线验证；强确认且不过热的A/B候选在本窗口达到目标胜率，但样本少，仍需14:45-14:50复核。"
+        review = "改进版回测：按新规则（tail_gain>=0.5%、前日涨幅过滤、板块动量、盘中反弹保护）执行；弱市bear状态仅保留S/A级，B级直接过滤。需继续验证14:45-14:50复核效果。"
     else:
-        review = "真实数据回测显示：按改进后的14:20 S-only规则，过去两周无可买入样本；A/B级14:20信号只能作为观察池，不能证明次日稳定上涨。"
+        review = "改进版回测显示：按新规则，过去两周无可买入样本；需继续验证参数适配。"
     retrospective = {
         "sample_trading_days": len(trade_days),
         "trade_count": len(returns),
@@ -1152,13 +1224,13 @@ def backtest_live(args: argparse.Namespace) -> Dict[str, Any]:
         "average_return_pct": round(statistics.mean(returns), 2) if returns else 0,
         "review": review,
         "rule_improvements": [
-            "保留14:20为预选，实际执行前必须14:45-14:50复核。",
-            "新增硬规则：至少两个非技术交叉验证（市场、基本面/流动性、板块、情绪/消息）才允许进入买入清单。",
-            "新增硬规则：B级且板块共振低于8分直接剔除。",
-            "新增硬规则：公共数据live路径在14:20允许强确认A/B，但必须不过热：资金代理>=63、尾盘涨幅<=1.5%、日内位置<=90%、距离日内高点至少0.5%、最后一根K线量能不过度集中。",
-            "新增终盘确认：14:45-14:50正式买入必须距离日内高点至少0.8%，避免尾盘贴高追价。",
-            "弱市继续过滤B级，避免市场状态拖累。",
-            "若连续无标的，可扩大universe文件，但不要降低科创板/非60过滤。",
+            "tail_gain阈值从0.25%提高到0.5%，过滤低质量尾盘信号。",
+            "新增前日涨幅过滤：>6%排除追高，<-4%排除抄底。",
+            "新增涨跌幅分位数过滤：分位数<60%排除。",
+            "新增板块动量因子（权重10%）：板块动量>2%加分。",
+            "bear状态扣分从8提高到12，更严格过滤弱市B级。",
+            "改进交叉验证：增加板块动量和前日momentum作为验证项。",
+            "改进S1-S7退出：增加盘中反弹保护（S4/S5 10:00翻红延长持有）。",
         ],
         "failed_notes": failures[:8],
     }

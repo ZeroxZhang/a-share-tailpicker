@@ -61,6 +61,17 @@ Core flow:
 5. Next-day exit: use the C 版 S1-S7 matrix. Low open without quick recovery exits first; tail strategy does not intentionally hold a second night unless all exception conditions are met.
 6. Live 14:20 rule: with public-data live runs, allow only strong-confirmation and non-overheated names into the buyable list. A/B-grade names can be preselected only when capital proxy is strong, sector/liquidity cross-validation is present, tail gain is not overheated, the price is not pinned near the intraday high, and the last bar volume is not excessively concentrated. Other scored or active names go to `watchlist` only until a 14:45-14:50 rerun confirms volume, sector resonance, no negative pattern, and price at least 0.8% below the intraday high before a final buy decision.
 
+### 改进版新增规则（v2.0）
+
+1. **tail_gain阈值提高**: 从0.25%提高到**0.5%**，过滤低质量尾盘信号。
+2. **前日涨幅过滤**: 前日涨幅>6%排除（避免追高），前日跌幅>4%排除（避免抄底）。
+3. **涨跌幅分位数过滤**: 当日涨幅在全市场分位数<60%排除（仅保留相对强势标的）。
+4. **板块动量因子**: 板块近3日涨幅>2%作为加分项（权重10%），板块动量为负则扣分。
+5. **前日momentum因子**: 前日涨幅0-3%加分（权重5%），前日大涨>5%扣分。
+6. **弱市扣分提高**: bear状态扣分从8提高到**12**，更严格过滤弱市B级。
+7. **改进交叉验证**: 增加板块动量和前日momentum作为交叉验证项。
+8. **改进S1-S7退出**: 增加盘中反弹保护（S4/S5 10:00翻红时延长持有）。
+
 ## Scheduled Run
 
 Use a local scheduler, Codex automation, cron, launchd, or another orchestrator to invoke:
