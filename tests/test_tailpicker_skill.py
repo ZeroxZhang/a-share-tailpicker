@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SKILL_DIR = REPO_ROOT / "skill"
+SKILL_DIR = REPO_ROOT
 SCRIPT_PATH = SKILL_DIR / "scripts" / "tailpicker.py"
 
 
