@@ -3,116 +3,149 @@ name: a-share-tailpicker
 description: Use when screening A股主板尾盘标的, 尾盘选股, 14:20/14:25 close-session candidates, or backtesting and reviewing the C 版 A-share tail-trading methodology.
 ---
 
-# A股尾盘选股
+# A股尾盘选股 (v4)
 
 ## Overview
 
-Use this skill to run the C 版 A股主板尾盘选股 methodology as a repeatable Agent workflow: fetch free data, filter non-C-version boards such as 科创板, score candidates with market/fundamental/sentiment/news 交叉验证, output buyable names with reasons, suggested price, position, and next-day actions, then backtest and improve the rules.
+Use this skill to run the C 版 A股主板尾盘选股 methodology as a repeatable Agent workflow: fetch free data (multi-source), filter non-C-version boards, score candidates with market/fundamental/sentiment/news 交叉验证, output buyable names with reasons, suggested price, position, and next-day actions, then backtest under a realistic fill/cost model and improve the rules under an anti-overfit guardrail.
 
 This is research automation only. Always preserve the disclaimer that the output is not investment advice.
 
+## v4 架构 (2026-06-17 重构)
+
+策略层不再直接接触数据源,改为分层:
+
+- `scripts/databackend.py` — 多源数据抽象。优先级:iFinD(运行在 Kimi Code 上时自动启用)→ AKShare 多端点(东财/新浪/腾讯/雪球)→ 直接东财 HTTP。结果落盘缓存,带 `source` 标签。
+- `scripts/enrichment.py` — 09:00 富化缓存 bundle(市场状态、全市场板块共振、基本面、新闻情绪、热度),实盘 screen 只读缓存,缺失字段显式标 `missing` 并按规则封顶 grade 到 B。
+- `scripts/execution.py` — fixture/live 共用的保守成交模型:限价单触及且当根 5min K 收盘在成交侧才成交;成本显式化(佣金+印花税卖出+沪市过户费+滑点)。
+- `scripts/stats.py` — 分布/最大回撤/Sharpe/Calmar/胜率 Wilson CI/t 统计量/跳空止损频次/归因。
+- `scripts/risk.py` — 组合风控 caps(总仓位/单行业/单票),替代裸 top-5。
+- `scripts/tailpicker.py` — 策略主体、评分、CLI(`screen`/`backtest`/`enrich`)。
+
 ## Quick Start
 
-Run the bundled script first. The live path uses AKShare free public-data interfaces, especially `stock_zh_a_hist_min_em`, `stock_zh_a_hist`, `stock_news_em`, and related market/sector endpoints.
-
 ```bash
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --asof-time 14:20 --output reports/tailpick_today.md
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py backtest --days 5 --asof-time 14:20 --output reports/tailpick_backtest.md
+# 1. 09:00 构建当日富化缓存(市场/板块/基本面/新闻/热度)
+~/.claude/skills/a-share-tailpicker/.venv/bin/python ~/.claude/skills/a-share-tailpicker/scripts/tailpicker.py enrich --trade-date 2026-06-17
+
+# 2. 14:20 预选 / 14:50 最终确认
+~/.claude/skills/a-share-tailpicker/.venv/bin/python ~/.claude/skills/a-share-tailpicker/scripts/tailpicker.py screen --asof-time 14:20 --output reports/tailpick_today.md
+~/.claude/skills/a-share-tailpicker/.venv/bin/python ~/.claude/skills/a-share-tailpicker/scripts/tailpicker.py backtest --days 5 --asof-time 14:50 --output reports/tailpick_backtest.md
+
+# 3. walk-forward 回测(训练/OOS 分割,检测过拟合)
+~/.claude/skills/a-share-tailpicker/.venv/bin/python ~/.claude/skills/a-share-tailpicker/scripts/tailpicker.py backtest --days 30 --asof-time 14:50 --walk-forward --output reports/bt_wf.md
 ```
 
-Reports default to Markdown when the output path ends in `.md` or `.markdown`. Use `--format json` or a `.json` path when another program needs structured JSON.
+报告默认 Markdown(`.md`/`.markdown`),需要结构化 JSON 用 `--format json` 或 `.json` 路径。
 
-For deterministic validation or when free data APIs are unstable:
+离线 fixture(无需网络,用于确定性验证):
 
 ```bash
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --fixture ~/.agents/skills/a-share-tailpicker/references/fixture_market_week.json --asof-time 14:20 --output reports/fixture_screen.md
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py backtest --fixture ~/.agents/skills/a-share-tailpicker/references/fixture_market_week.json --asof-time 14:20 --output reports/fixture_backtest.md
+~/.claude/skills/a-share-tailpicker/.venv/bin/python ~/.claude/skills/a-share-tailpicker/scripts/tailpicker.py screen --fixture ~/.claude/skills/a-share-tailpicker/references/fixture_market_week.json --asof-time 14:20 --output reports/fixture_screen.md
+~/.claude/skills/a-share-tailpicker/.venv/bin/python ~/.claude/skills/a-share-tailpicker/scripts/tailpicker.py backtest --fixture ~/.claude/skills/a-share-tailpicker/references/fixture_market_week.json --asof-time 14:20 --walk-forward --output reports/fixture_backtest.md
 ```
 
 ## Workflow
 
-1. Load [references/data-sources.md](references/data-sources.md) if data coverage, API fallback, or schedule setup matters.
-2. Execute `tailpicker.py screen` at 14:20 or 14:25. Treat 14:20 as a pre-close candidate scan; require a 14:45-14:50 signal recheck before actual order placement.
-3. Confirm every final order includes:
-   - `code`, `name`, `grade`, `score`
-   - `reasons`
-   - `suggested_price`
-   - `position_pct`
-   - `next_day_plan`
-   - `cross_validation`
-4. Read the three output layers separately:
-   - `final_orders`: strict buyable list. Only this layer can be considered for execution.
-   - `watchlist`: observation-only candidates. They have useful tail-session signals but still have blockers or need 14:45-14:50 confirmation.
-   - `market_notes`: compact explanation for buyable, observation-only, or quiet days.
-5. Prefer Markdown reports for human review. Use JSON only for automated parsing or backtest post-processing.
-6. If `market_state.state == "halt"` or final orders are empty, report no-buy for execution but still summarize `watchlist` and `market_notes` for daily review.
-7. For review or improvement, run `tailpicker.py backtest`, compare generated picks with the next trading day's actual open/intraday exit result, then update thresholds only when the retrospective points to a repeatable failure.
+1. Load [references/data-sources.md](references/data-sources.md) if data coverage, multi-source fallback, or schedule setup matters.
+2. 先跑 `enrich` 构建当日富化缓存;实盘 screen 会自动加载缓存,缓存缺失时按需构建并落盘。
+3. 14:20/14:25 执行 `tailpicker.py screen`。14:20 视为预选;真实下单前必须 14:45-14:50 复核。
+4. 每个最终订单确认包含:`code`/`name`/`grade`/`score`/`reasons`/`suggested_price`/`position_pct`/`next_day_plan`/`cross_validation`,以及组合风控 `constraints_applied`。
+5. 分层读取输出:
+   - `final_orders`:严格可买层(已过组合风控 caps)。只有这一层可考虑执行。
+   - `watchlist`:观察层,有尾盘信号但仍有阻碍或需 14:45-14:50 复核。
+   - `market_notes`:当天可买/观察/平静的简短说明。
+6. `market_state.state == "halt"` 或 final_orders 为空 → 不买,但仍汇总 watchlist/market_notes 供复盘。
+7. 回测/改进:跑 `tailpicker.py backtest`(可加 `--walk-forward`),回测使用保守成交模型与显式成本;更新阈值前必须遵守 [Improvement Loop](#improvement-loop--反过拟合护栏) 护栏。
 
 ## C 版 Rules
 
-Default universe: C 版沪主板 `60` 系列 only. Exclude 科创板 `688`, 创业板 `300/301`, 北交所 `8/4/43/87/92`, ST/*ST, new stocks under 60 trading days, limit-up/down, weak liquidity, extreme turnover, recent abnormal volatility, and stocks with recent material negative news.
+Default universe: **全沪主板 `60` 系列**(排除科创 `688`),再按板块排除 `银行`、`农林牧渔`、ST/*ST(银行低波政策驱动、尾盘形态失效;农业投机季节性强、易被资金短线操控)。不再使用旧的手挑 100 只池(有选择/生存者偏差)。新增上市<60 交易日、涨跌停、弱流动性、极端换手、近期异常波动、近期重大负面新闻由 hard_filter 排除。
+
+实盘默认股票池来源优先级:① 当日 spot 快照(enrichment stock_map,带真实名称/板块/ST/流动性,point-in-time)→ ② `all_codes()`(`stock_info_a_code_name` 全量代码表,板块用名称关键词兜底)。两条路都应用板块/ST 排除。`--limit 0`(默认)= 全大盘(~1600)。
 
 Core flow:
 
-1. Market state and halt check: trend, volatility, breadth, volume, index tail decline, limit-up/down ratio.
+1. Market state and halt check: trend, volatility, breadth, volume, index tail decline, limit-up/down ratio. 实盘从 enrichment 读取真实值。
 2. Seven-layer funnel: hard exclusions, adaptive volume/price filter, intraday pattern, capital-flow proxy, MA trend, sector resonance, final ranking.
 3. 交叉验证: never approve using indicators alone. Require at least two non-technical confirmations from market environment, company fundamentals/liquidity, sector resonance, public sentiment, or news/F10 risk. If the result is only technical pattern + proxy capital flow, reject it.
 4. Suggested price: limit price equals observed price plus 0.2%-0.5% by grade, rounded to cents; if the scan is at 14:20, label the price as conditional on 14:45-14:50 confirmation.
-5. Next-day exit: use the C 版 S1-S7 matrix. Low open without quick recovery exits first; tail strategy does not intentionally hold a second night unless all exception conditions are met.
+5. Next-day exit: **v3.1 条件卖出策略**(取代旧的 S1-S7 矩阵)。次日开盘≥+0.5%立即获利了结,开盘≤-0.5%立即止损,其他情况盘中+0.5%止盈或 14:50 前时间止损。成交在回测中按保守模型执行(见 `execution.py`)。
 6. Live 14:20 rule: with public-data live runs, allow only strong-confirmation and non-overheated names into the buyable list. A/B-grade names can be preselected only when capital proxy is strong, sector/liquidity cross-validation is present, tail gain is not overheated, the price is not pinned near the intraday high, and the last bar volume is not excessively concentrated. Other scored or active names go to `watchlist` only until a 14:45-14:50 rerun confirms volume, sector resonance, no negative pattern, and price at least 0.8% below the intraday high before a final buy decision.
 
-### v3.1 改进规则（基于回测优化）
+### v3.1 阈值规则(当前生效,见 CHANGELOG)
 
-回测结果（2026-03-09 至 2026-06-16，50只沪主板60系列股票，68个交易日）：
-- **胜率：76.5%**（17笔交易，13笔盈利）
-- **平均收益率：+0.27%**（扣除0.25%双边交易成本）
-- **交易频率：约每4天1笔**
+回测口径见下方 [胜率与样本声明](#胜率与样本声明)。核心硬条件:
 
-核心改进：
+1. 当日涨幅(相对昨收)1%-4%
+2. 前日涨幅 -2%~2%
+3. 尾盘涨幅 0.8%-2.5%
+4. 量比 0.8-3.0(实盘为标准 5 日量比;数据缺失时回退到尾盘/早盘代理量并标注 `volume_ratio_source`)
+5. 日内位置 <75%
+6. 价格距日内高点 ≤-0.8%
+7. 资金流代理分 ≥60
+8. 条件卖出(见上)
+9. 交叉验证:市场/基本面流动性/板块/情绪新闻/板块动量/前日momentum 至少 2 项
 
-1. **当日涨幅过滤**：从0.5%放宽到 **1%-4%**，过滤尾盘过度追高和弱势标的。
-2. **前日涨幅过滤**：收紧为 **-2%到2%**（前日大涨或大跌均排除），避免异常波动延续。
-3. **尾盘涨幅过滤**：收紧为 **0.8%-2.5%**，过滤过热和过冷信号。
-4. **量比过滤**：收紧为 **0.8-3.0**，过滤过度放量和缩量标的。
-5. **日内位置过滤**：新增 **<75%** 硬条件，过滤已大幅冲高的标的。
-6. **价格距离高点过滤**：新增 **≤-0.8%** 硬条件，确保尾盘有回调空间。
-7. **资金流代理分过滤**：从63降低到 **≥60**，保持适度门槛。
-8. **条件卖出策略**：次日开盘≥+0.5%立即卖出（获利了结），开盘≤-0.5%立即止损（风险控制），其他情况+0.5%止盈或收盘止损（时间止损）。
-9. **简化评分**：降低复杂度，聚焦核心因子（形态、资金流、均线、板块、尾盘涨幅、量比）。
-10. **交叉验证简化**：移除涨幅分位数（数据不可用），保留市场/基本面/板块/情绪四项。
+## 胜率与样本声明
+
+> ⚠️ 历史"76.5% 胜率 / +0.27% 均收益"是 v3.1 在 **乐观成交假设**(触及即成交)+ **实盘信号 stub**(ST/市值/PE/新闻/市场状态全写死)+ **错误的 pre_close**(用首根5min开盘当昨收)下得到的,与实盘不可比,在严格量化标准下不可信。
+
+v4 修正了成交/成本模型与实盘信号后,**胜率与均收益必须用新口径在 ≥200 笔交易上重跑后再声明**。回测报告现已包含:
+
+- 样本量、胜率点估计 + Wilson 95% CI、t 统计量
+- 收益分布(均值/中位/标准差/偏度/p05/p95/最差N笔)
+- 最大回撤、Sharpe(年化)、Calmar、profit factor
+- 跳空止损频次与平均损失(尾部风险)
+- 按等级/形态/板块/市场状态归因
+- walk-forward 训练/OOS 分割与过拟合警告
+
+在样本量 <30 或 t<2 时,报告会显式标注"不足以做统计显著结论"。
 
 ## Scheduled Run
 
-Use a local scheduler, Codex automation, cron, launchd, or another orchestrator to invoke:
+建议每日调度:
 
 ```bash
-python3 ~/.agents/skills/a-share-tailpicker/scripts/tailpicker.py screen --asof-time 14:20 --output ~/tailpicker/reports/$(date +%Y%m%d)_1420.md
+PY=~/.claude/skills/a-share-tailpicker/.venv/bin/python
+SCRIPT=~/.claude/skills/a-share-tailpicker/scripts/tailpicker.py
+
+# 09:00 富化缓存(市场/板块/基本面/新闻/热度)
+$PY $SCRIPT enrich --trade-date $(date +%Y-%m-%d)
+
+# 14:20 预选
+$PY $SCRIPT screen --asof-time 14:20 --output ~/tailpicker/reports/$(date +%Y%m%d)_1420.md
+
+# 14:45-14:50 最终确认
+$PY $SCRIPT screen --asof-time 14:50 --output ~/tailpicker/reports/$(date +%Y%m%d)_1450.md
+
+# 次日 09:25/10:00/10:30/14:50 执行条件退出
 ```
 
-Recommended schedule:
+## Improvement Loop — 反过拟合护栏
 
-- 09:00: update announcements/news/F10 risk cache.
-- 14:20: pre-close scan and user notification.
-- 14:45-14:50: re-run screen for final confirmation.
-- 15:30: update adaptive parameter cache.
-- Next trading day 09:25/10:00/10:30/14:50: run or apply the exit plan.
+保留按失败簇迭代,但加护栏。**改阈值/权重前必须:**
 
-## Improvement Loop
+1. 更新 `scripts/tailpicker.py` 的 `PARAMS_HASH`。
+2. 在 [CHANGELOG.md](CHANGELOG.md) 记录:改了什么、为什么(哪个失败簇)、在哪个样本上验证、train/OOS 结果。
+3. 在**新样本**(非推导出该改动的样本)上验证。
+4. 跑 `--walk-forward`,确认 OOS 段没有显著劣化。
 
-After backtesting, modify rules only when failures cluster:
+典型迭代方向(需在新样本验证后才合入):
 
-- False positives from isolated individual moves: raise sector resonance or capital-flow threshold.
-- Losses in weak markets: lower `bear` position coefficient or allow only S/A grades.
-- Good missed candidates: loosen early 14:20 tail-gain threshold but keep 14:45 confirmation.
-- News/fundamental failures: increase negative-news penalty and blacklist duration.
-- If real backtests show B-grade failures with weak sector confirmation, keep the hard rule: B级 + sector score below 8 is no-buy.
-- If 14:20 backtests show A/B-grade candidates do not rise stably next day, require the early-quality gate: capital proxy >=60, tail gain 0.8%-2.5%, intraday position <75%, price at least 0.8% below intraday high, volume ratio 0.8-3.0, and last-bar volume share <=30%.
-- If 14:45-14:50 confirmation produces too many false positives, require the final-quality gate: all early-quality gates plus day return 1%-4%, prev return -2%-2%. The 2026-06-16 backtest showed this kept the win rate at 76.5% with +0.27% average return.
-- The v3.1 conditional exit strategy (open >=+0.5% sell immediately, open <=-0.5% stop loss immediately, otherwise +0.5% take-profit or close stop-loss) proved more effective than the complex S1-S7 matrix, improving executable win rate from ~60% to 76.5%.
+- 个股孤立异动导致的假阳性 → 提高板块共振或资金流门槛。
+- 弱市亏损 → 下调 bear 仓位系数或仅保留 S/A 级(脚本已执行;组合 caps 已在 bear 下收紧)。
+- 漏掉好票 → 放宽 14:20 尾盘涨幅门槛,但保留 14:45 复核。
+- 新闻/基本面失败 → 加大负面新闻扣分与黑名单时长。
+- B 级 + 板块共振不足 → 维持硬规则:no-buy。
+- 回测显示同行业扎堆 → 组合风控 caps(总/行业/单票)已生效。
 
 Validate after edits:
 
 ```bash
-python3 -m unittest /Volumes/Out/codex_projects/尾盘选股系统/tests/test_tailpicker_skill.py
-python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py ~/.agents/skills/a-share-tailpicker
+python3 -m unittest discover -s ~/.claude/skills/a-share-tailpicker/tests
 ```
+
+## 风险声明
+
+本项目不保证收益或未来胜率。多源公开数据可能延迟、缺失或结构变化;回测受样本量、交易成本、滑点、跳空和成交可得性影响。任何标的、价格、仓位或退出计划仅供研究和复盘,实际交易风险自负。

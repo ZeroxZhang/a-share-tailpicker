@@ -17,17 +17,26 @@ class TailpickerSkillTests(unittest.TestCase):
         skill_md = SKILL_DIR / "SKILL.md"
         self.assertTrue(skill_md.exists(), "SKILL.md should exist")
         text = skill_md.read_text(encoding="utf-8")
+        # v4: SKILL.md declares the architecture + methodology; specific data
+        # function names live in data-sources.md / databackend.py.
         for required in [
             "a-share-tailpicker",
             "C 版",
-            "AKShare",
-            "stock_zh_a_hist_min_em",
-            "stock_news_em",
-            "科创板",
+            "688",
             "14:20",
             "交叉验证",
+            "databackend.py",
+            "enrichment.py",
+            "execution.py",
+            "保守成交",
+            "组合风控",
+            "全沪主板",
         ]:
             self.assertIn(required, text)
+        # data-sources.md must still name the multi-source endpoints.
+        ds = (SKILL_DIR / "references" / "data-sources.md").read_text(encoding="utf-8")
+        for required in ["stock_zh_a_hist_min_em", "stock_news_em", "iFinD", "AKShare"]:
+            self.assertIn(required, ds)
 
     def test_script_filters_non_c_version_universe(self):
         module = self._load_script()
