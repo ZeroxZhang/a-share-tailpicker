@@ -89,7 +89,39 @@ NEGATIVE_NEWS_KEYWORDS = [
 ]
 
 STATE_COEF = {"bull": 1.0, "range": 0.7, "bear": 0.3, "halt": 0.0}
-DEFAULT_CACHE_DIR = Path.home() / ".claude" / "skills" / "a-share-tailpicker" / "cache"
+_DEFAULT_SKILL_ROOT: Optional[Path] = None
+
+def _find_skill_root() -> Path:
+    """Detect the actual skill root directory regardless of whether it lives
+    under ~/.claude/skills/ or ~/.agents/skills/.
+    """
+    global _DEFAULT_SKILL_ROOT
+    if _DEFAULT_SKILL_ROOT is not None:
+        return _DEFAULT_SKILL_ROOT
+    candidates = [
+        Path.home() / ".agents" / "skills" / "a-share-tailpicker",
+        Path.home() / ".claude" / "skills" / "a-share-tailpicker",
+    ]
+    for p in candidates:
+        if p.is_dir() and (p / "scripts" / "tailpicker.py").exists():
+            _DEFAULT_SKILL_ROOT = p
+            return p
+    # Fallback: derive from __file__ if this module is inside the skill tree
+    try:
+        this_dir = Path(__file__).resolve().parent.parent
+        if (this_dir / "scripts" / "tailpicker.py").exists():
+            _DEFAULT_SKILL_ROOT = this_dir
+            return this_dir
+    except NameError:
+        pass
+    # Ultimate fallback: prefer ~/.agents if it exists, else ~/.claude
+    fallback = Path.home() / ".agents" / "skills" / "a-share-tailpicker"
+    fallback.mkdir(parents=True, exist_ok=True)
+    _DEFAULT_SKILL_ROOT = fallback
+    return fallback
+
+
+DEFAULT_CACHE_DIR = _find_skill_root() / "cache"
 PARAMS_HASH = "v4.0-2026-06-17"  # bump when thresholds change; recorded for OOS guardrail
 
 # C 版尾盘不做的板块。银行:低波、政策/指数驱动,尾盘形态失效且易被权重操纵;
@@ -1021,6 +1053,9 @@ def build_full_universe(backend: DataBackend, enrichment: Optional[Dict[str, Any
 
     # Fallback: full code list from all_codes, name-based exclusions.
     all_codes = backend.all_codes() or []
+    if not all_codes:
+        # Last resort: use the DEFAULT_UNIVERSE to avoid a completely empty scan
+        return [c for c in DEFAULT_UNIVERSE if is_c_version_universe(c)]
     codes = []
     for item in all_codes:
         code = normalize_code(item.get("code", ""))
@@ -1057,10 +1092,19 @@ def screen_live(args: argparse.Namespace) -> Dict[str, Any]:
 
     # If no explicit universe was given, use the full main-board universe
     # (excl. 688/ST/银行/农林牧渔) — replaces the old hand-picked 100-name list.
+    # For speed and reliability with free public endpoints, when no explicit
+    # universe is given and the limit is small (or not set), stay with the
+    # DEFAULT_UNIVERSE (100 liquid names) rather than expanding to the full
+    # ~1700 main board which would trigger thousands of serial API calls and
+    # likely timeout.
     if not args.codes and not args.universe_file:
-        full = build_full_universe(backend, enrichment)
-        if full:
-            codes = full[: (args.limit or len(full))]
+        if (args.limit or 0) <= 100:
+            # Keep the 100-name DEFAULT_UNIVERSE already loaded by load_codes
+            pass
+        else:
+            full = build_full_universe(backend, enrichment)
+            if full:
+                codes = full[:args.limit]
 
     market = live_market_state(trade_date, enrichment)
     decisions: List[StockDecision] = []
@@ -1555,7 +1599,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.fixture:
+    if hasattr(args, 'fixture') and args.fixture:
         fixture = load_fixture(args.fixture.expanduser())
         cost = _cost_from_args(args)
         if args.command == "screen":

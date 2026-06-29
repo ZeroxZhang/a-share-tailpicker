@@ -381,7 +381,7 @@ class AkShareBackend(DataBackend):
     # -- industry ---------------------------------------------------------
     def industry_constituents(self) -> Optional[Dict[str, List[str]]]:
         cache_key = "industry_constituents"
-        cached = self.cache.get(cache_key, ttl=24 * 3600)
+        cached = self.cache.get(cache_key, ttl=7 * 24 * 3600)  # extended to 7 days
         if cached is not None:
             return cached
         ak, pd = _import_akshare()
@@ -393,7 +393,9 @@ class AkShareBackend(DataBackend):
                 return None
             name_col = "板块名称" if "板块名称" in boards.columns else boards.columns[1]
             result: Dict[str, List[str]] = {}
-            for board_name in boards[name_col].tolist()[:120]:  # cap for speed
+            # Cap to 20 major boards to avoid 120 sequential API calls that
+            # easily exceed the timeout budget with free public endpoints.
+            for board_name in boards[name_col].tolist()[:20]:
                 try:
                     cons = _bounded(lambda b=board_name: ak.stock_board_industry_cons_em(symbol=b), self.timeout)
                     if cons is None or len(cons) == 0:
@@ -747,23 +749,50 @@ def _f(value) -> float:
 
 
 def _bounded(func, timeout: int):
-    """Run func with a timeout. Uses signal on Unix; on other platforms runs bare."""
+    """Run func with a timeout. Works in any thread (main or sub-thread).
+
+    Uses a single daemon thread + join(timeout) for cross-thread safety.
+    signal.SIGALRM only works in the main thread and silently fails in
+    ThreadPoolExecutor workers.
+    """
     if timeout <= 0:
         return func()
-    try:
-        import signal
-        def handler(_s, _f):
-            raise TimeoutError(f"data fetch exceeded {timeout}s")
-        previous = signal.signal(signal.SIGALRM, handler)
-        signal.alarm(int(timeout))
+    import threading
+    result = [None]
+    exc = [None]
+    def wrapper():
         try:
-            return func()
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, previous)
-    except Exception:
-        # signal not available (e.g. non-main thread / Windows) – run bare.
-        return func()
+            result[0] = func()
+        except Exception as e:
+            exc[0] = e
+    t = threading.Thread(target=wrapper, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError(f"data fetch exceeded {timeout}s")
+    if exc[0] is not None:
+        raise exc[0]
+    return result[0]
+
+
+def _find_skill_root() -> Path:
+    """Detect the actual skill root directory."""
+    candidates = [
+        Path.home() / ".agents" / "skills" / "a-share-tailpicker",
+        Path.home() / ".claude" / "skills" / "a-share-tailpicker",
+    ]
+    for p in candidates:
+        if p.is_dir() and (p / "scripts" / "tailpicker.py").exists():
+            return p
+    try:
+        this_dir = Path(__file__).resolve().parent.parent
+        if (this_dir / "scripts" / "tailpicker.py").exists():
+            return this_dir
+    except NameError:
+        pass
+    fallback = Path.home() / ".agents" / "skills" / "a-share-tailpicker"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
 
 
 _default_backend: Optional[CompositeBackend] = None
@@ -771,7 +800,11 @@ _default_backend: Optional[CompositeBackend] = None
 
 def get_backend(cache_dir: Optional[Path] = None, timeout: int = 8, eastmoney_fallback: bool = True) -> CompositeBackend:
     global _default_backend
-    if _default_backend is None or cache_dir is not None:
-        root = Path(cache_dir or (Path.home() / ".claude" / "skills" / "a-share-tailpicker" / "cache"))
+    root = Path(cache_dir) if cache_dir is not None else _find_skill_root() / "cache"
+    root.mkdir(parents=True, exist_ok=True)
+    # Re-create backend if the root path has changed (e.g. after a fix to the
+    # hard-coded path) so that cache writes actually go to the right place.
+    if _default_backend is None or getattr(_default_backend, "_cache_dir", None) != str(root):
         _default_backend = CompositeBackend(root, timeout, eastmoney_fallback)
+        _default_backend._cache_dir = str(root)  # type: ignore[attr-defined]
     return _default_backend

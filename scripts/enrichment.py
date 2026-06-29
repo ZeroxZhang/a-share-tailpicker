@@ -149,11 +149,19 @@ def build_enrichment(trade_date: str, backend: Optional[DataBackend] = None,
         gaps.append("hot_rank_unavailable")
     # News is expensive (per-code call). Only enrich the candidate universe
     # passed in ``codes``; the screen enriches scored candidates lazily.
+    # Parallelise to avoid serial timeouts on free public endpoints.
     if codes:
-        for code in codes:
-            ns = backend.news_sentiment(code)
-            if ns is not None:
-                news[code] = ns
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(backend.news_sentiment, code): code for code in codes}
+            for fut in concurrent.futures.as_completed(futures):
+                code = futures[fut]
+                try:
+                    ns = fut.result()
+                    if ns is not None:
+                        news[code] = ns
+                except Exception:
+                    continue
         if not news:
             gaps.append("news_sentiment_unavailable")
     bundle["news_sentiment"] = news
