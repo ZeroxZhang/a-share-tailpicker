@@ -6,3 +6,5 @@ reports/
 .venv/
 venv/
 cache/
+
+data_cache/

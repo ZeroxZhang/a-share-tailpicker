@@ -491,15 +491,26 @@ class AkShareBackend(DataBackend):
         if ak is None:
             return None
         try:
-            df = _bounded(lambda: ak.stock_info_a_code_name(), max(self.timeout, 30))
-            if df is None or len(df) == 0:
-                return None
-            result = [{"code": _normalize(str(c)), "name": str(n)}
-                      for c, n in zip(df["code"].tolist(), df["name"].tolist())]
-            self.cache.set(cache_key, result)
-            return result
+            # Primary: Shanghai-only list (fast, ~1700 main-board codes).
+            df = _bounded(lambda: ak.stock_info_sh_name_code(), max(self.timeout, 15))
+            if df is not None and len(df) > 0:
+                result = [{"code": _normalize(str(c)), "name": str(n)}
+                          for c, n in zip(df["证券代码"].tolist(), df["证券简称"].tolist())]
+                self.cache.set(cache_key, result)
+                return result
         except Exception:
-            return None
+            pass
+        # Fallback: full A-share list (slower, sometimes hangs).
+        try:
+            df = _bounded(lambda: ak.stock_info_a_code_name(), max(self.timeout, 30))
+            if df is not None and len(df) > 0:
+                result = [{"code": _normalize(str(c)), "name": str(n)}
+                          for c, n in zip(df["code"].tolist(), df["name"].tolist())]
+                self.cache.set(cache_key, result)
+                return result
+        except Exception:
+            pass
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -507,10 +518,11 @@ class AkShareBackend(DataBackend):
 # ---------------------------------------------------------------------------
 
 class IFindBackend(DataBackend):
-    """Thin iFinD backend. Activated only when ``iFinDPy`` is importable.
+    """iFinD backend via agent-gw (Kimi data-service bridge).
 
-    iFinD terminal objects are heavy; we implement only the methods that matter
-    for live screening and fall back to AKShare for anything not covered.
+    Activated when ``agent_gw`` is importable (the Moderato iFinD plugin
+    environment).  Falls back to AKShare for methods iFinD does not cover
+    (full intraday minute history, limit counts, industry/news/hot).
     """
 
     name = "ifind"
@@ -519,62 +531,229 @@ class IFindBackend(DataBackend):
         self.cache = cache
         self.timeout = timeout
         self.fallback = fallback
-        self._client = None
 
     @staticmethod
     def available() -> bool:
         try:
-            import iFinDPy  # type: ignore  # noqa: F401
+            import agent_gw  # type: ignore  # noqa: F401
             return True
         except Exception:
             return False
 
-    def _ensure(self):
-        if self._client is not None:
-            return self._client
+    # ------------------------------------------------------------------
+    # agent-gw helpers
+    # ------------------------------------------------------------------
+    def _call_ifind(self, api_name: str, params: Dict[str, Any],
+                    call_timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
         try:
-            import iFinDPy  # type: ignore
-            self._client = iFinDPy
-            return self._client
+            import agent_gw  # type: ignore
+            from agent_gw import AgentGwClient, AgentGwError  # type: ignore
+        except ImportError:
+            return None
+        try:
+            to = call_timeout or max(float(self.timeout), 30.0)
+            with AgentGwClient(timeout=to) as client:
+                resp = client.tools.call_data_source_tool({
+                    "data_source_name": "ifind",
+                    "api_name": api_name,
+                    "params": params,
+                })
+                text = getattr(resp, "text", None)
+                if text is None:
+                    return None
+                if isinstance(text, str):
+                    return json.loads(text)
+                if isinstance(text, dict):
+                    return text
+                return json.loads(str(text))
         except Exception:
             return None
 
+    @staticmethod
+    def _parse_csv_preview(preview: str) -> List[Dict[str, Any]]:
+        if not preview or not preview.strip():
+            return []
+        import csv
+        import io
+        try:
+            return list(csv.DictReader(io.StringIO(preview.strip())))
+        except Exception:
+            return []
+
+    @staticmethod
+    def _to_ifind_ticker(code: str) -> str:
+        code = _normalize(code)
+        if code.startswith("6"):
+            return f"{code}.SH"
+        if code.startswith("0") or code.startswith("3"):
+            return f"{code}.SZ"
+        if code.startswith("4") or code.startswith("8"):
+            return f"{code}.BJ"
+        return f"{code}.SH"
+
+    def _batch_call(self, api_name: str, batches: List[Dict[str, Any]],
+                    max_workers: int = 12, call_timeout: Optional[float] = None) -> List[Dict[str, Any]]:
+        import concurrent.futures
+        results: List[Dict[str, Any]] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(self._call_ifind, api_name, batch, call_timeout): batch for batch in batches}
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    resp = fut.result()
+                    if resp and isinstance(resp, dict):
+                        preview = resp.get("data_preview", "")
+                        rows = self._parse_csv_preview(preview)
+                        results.extend(rows)
+                except Exception:
+                    continue
+        return results
+
+    # ------------------------------------------------------------------
+    # spot snapshot  (close_summary, 3 tickers / call)
+    # ------------------------------------------------------------------
     def spot_snapshot(self, trade_date: str) -> Optional[Dict[str, Dict[str, Any]]]:
-        # iFinD snapshot is preferred; fall back to AKShare if anything fails.
-        snap = self._ifind_spot(trade_date)
-        if snap is not None:
-            return snap
-        return self.fallback.spot_snapshot(trade_date) if self.fallback else None
+        # Universe from fallback — lightweight, usually cached
+        codes = self.fallback.all_codes() if self.fallback else None
+        if not codes:
+            return None
+        # Shanghai main board only (60-series, excl 688)
+        sh_codes = [c for c in codes
+                    if c.get("code", "").startswith("6") and not c.get("code", "").startswith("688")]
+        if not sh_codes:
+            return None
+        name_map = {c["code"]: c.get("name", c["code"]) for c in sh_codes}
 
-    def _ifind_spot(self, trade_date: str) -> Optional[Dict[str, Dict[str, Any]]]:
-        client = self._ensure()
-        if client is None:
+        tickers = [self._to_ifind_ticker(c["code"]) for c in sh_codes]
+        batches = [{
+            "ticker": ",".join(tickers[i:i + 3]),
+            "file_path": f"/tmp/ifind_spot_{i}.csv",
+            "type": "close_summary",
+            "time": f"{trade_date} 15:00:00",
+            "format": "json",
+        } for i in range(0, len(tickers), 3)]
+
+        rows = self._batch_call("ifind_get_stock_realtime_price", batches,
+                                max_workers=12, call_timeout=20)
+        if not rows:
             return None
-        try:
-            # iFinD THS_DateSerial / THS_HighFrequenceSequence vary by version;
-            # this is a best-effort hook. On any error we return None so the
-            # caller falls back to AKShare.
-            codes = client.THS_BasicData_basics if hasattr(client, "THS_BasicData_basics") else None
-            return None  # placeholder: real deployments inject a configured snapshot
-        except Exception:
+
+        snap: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            thscode = row.get("thscode", "")
+            code = _normalize(thscode)
+            if not code:
+                continue
+            name = name_map.get(code, code)
+            snap[code] = {
+                "code": code,
+                "name": name,
+                "price": _f(row.get("close")),
+                "pct_change": _f(row.get("pct_chg")),
+                "amount_mn": _f(row.get("amt")) / 1_000_000,
+                "turnover_rate": _f(row.get("turn")),
+                "pe": None,
+                "market_cap_bn": None,
+                "volume_ratio": None,
+                "is_st": "ST" in name.upper() or "*ST" in name.upper(),
+            }
+        return snap if snap else None
+
+    # ------------------------------------------------------------------
+    # daily history  (ifind_get_price, 3 tickers / call)
+    # ------------------------------------------------------------------
+    def daily_history(self, code: str, end_date: str, n: int) -> Optional[List[Dict[str, Any]]]:
+        cache_key = f"ifind_daily|{code}|{end_date}|{n}"
+        cached = self.cache.get(cache_key, ttl=24 * 3600)
+        if cached is not None:
+            return cached
+
+        ticker = self._to_ifind_ticker(code)
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+        start = end - timedelta(days=n * 2 + 10)
+
+        resp = self._call_ifind("ifind_get_price", {
+            "ticker": ticker,
+            "start_date": start.strftime("%Y-%m-%d"),
+            "end_date": end.strftime("%Y-%m-%d"),
+            "file_path": f"/tmp/ifind_daily_{code}.csv",
+            "interval": "D",
+            "adjust": "forward",
+            "format": "json",
+        }, call_timeout=30)
+        if not resp or not isinstance(resp, dict):
             return None
+        preview = resp.get("data_preview", "")
+        rows = self._parse_csv_preview(preview)
+        if not rows:
+            return None
+
+        result = []
+        for row in rows:
+            result.append({
+                "date": str(row.get("time", "")),
+                "open": _f(row.get("open")),
+                "close": _f(row.get("close")),
+                "high": _f(row.get("high")),
+                "low": _f(row.get("low")),
+                "volume": _f(row.get("volume")),
+                "amount": 0.0,   # iFinD get_price does not provide amount
+                "turnover": 0.0,
+            })
+        result = result[-n:] if len(result) > n else result
+        self.cache.set(cache_key, result)
+        return result
 
     def daily_prev_close(self, code: str, trade_date: str) -> Optional[float]:
-        client = self._ensure()
-        if client is None:
-            return self.fallback.daily_prev_close(code, trade_date) if self.fallback else None
-        try:
-            # Best-effort; delegate to AKShare which is reliable for daily bars.
-            return self.fallback.daily_prev_close(code, trade_date) if self.fallback else None
-        except Exception:
+        hist = self.daily_history(code, trade_date, 5)
+        if not hist:
             return None
+        prev_rows = [r for r in hist if str(r.get("date", "")) < trade_date]
+        if prev_rows:
+            return float(prev_rows[-1]["close"])
+        if len(hist) >= 2:
+            return float(hist[-2]["close"])
+        return None
 
-    # Delegate everything else to the AKShare fallback so iFinD only overrides
-    # where it genuinely adds value (snapshot / Level-2 capital flow).
-    def __getattr__(self, item):
-        if self.fallback is not None and hasattr(self.fallback, item):
-            return getattr(self.fallback, item)
-        raise AttributeError(item)
+    # ------------------------------------------------------------------
+    # index tail return — fallback to AKShare (iFinD realtime_price is
+    # unreliable for the index on the current trading day)
+    # ------------------------------------------------------------------
+    def index_tail_return(self, trade_date: str, asof_time: str = "14:50") -> Optional[float]:
+        return self.fallback.index_tail_return(trade_date, asof_time) if self.fallback else None
+
+    # ------------------------------------------------------------------
+    # limit counts — no direct iFinD API; fallback to AKShare
+    # ------------------------------------------------------------------
+    def limit_counts(self, trade_date: str) -> Optional[Tuple[int, int]]:
+        return self.fallback.limit_counts(trade_date) if self.fallback else None
+
+    # ------------------------------------------------------------------
+    # minute bars — iFinD has no full intraday minute-history API.
+    # Fallback to AKShare.
+    # ------------------------------------------------------------------
+    def minute_bars(self, code: str, start: str, end: str, period: int = 5) -> Optional[List[Dict[str, Any]]]:
+        return self.fallback.minute_bars(code, start, end, period) if self.fallback else None
+
+    # ------------------------------------------------------------------
+    # Delegate everything else to fallback
+    # ------------------------------------------------------------------
+    def trade_calendar(self, end_day: date, lookback: int) -> Optional[List[str]]:
+        return self.fallback.trade_calendar(end_day, lookback) if self.fallback else None
+
+    def industry_constituents(self) -> Optional[Dict[str, List[str]]]:
+        return self.fallback.industry_constituents() if self.fallback else None
+
+    def industry_returns(self, trade_date: str) -> Optional[Dict[str, float]]:
+        return self.fallback.industry_returns(trade_date) if self.fallback else None
+
+    def news_sentiment(self, code: str) -> Optional[int]:
+        return self.fallback.news_sentiment(code) if self.fallback else None
+
+    def hot_rank(self) -> Optional[Dict[str, int]]:
+        return self.fallback.hot_rank() if self.fallback else None
+
+    def all_codes(self) -> Optional[List[Dict[str, str]]]:
+        return self.fallback.all_codes() if self.fallback else None
 
 
 # ---------------------------------------------------------------------------
